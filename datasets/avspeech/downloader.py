@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import youtube_dl
 import ffmpeg
@@ -45,7 +46,10 @@ def download(vidinfo):
 
 
 def main():
-    with open('english_vidinfos.pickle', 'rb') as pickle_file:
+    data_type = sys.argv[1]
+    assert data_type in ('test', 'train')
+
+    with open(f'{data_type}.pickle', 'rb') as pickle_file:
         vidinfos = pickle.load(pickle_file)
 
 
