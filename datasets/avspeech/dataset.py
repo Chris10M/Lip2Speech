@@ -19,6 +19,26 @@ import json
 import face_alignment
 
 
+def av_speech_collate_fn(batch):
+    lower_faces, speeches, face_crop = zip(*batch)
+    
+    max_frames_in_batch = min([l.shape[0] for l in lower_faces])
+    max_samples_in_batch = min([s.shape[1] for s in speeches])
+    
+    trimmed_lower_faces = list()
+    trimmed_speeches = list()
+    for lower_face, speech in zip(lower_faces, speeches):
+        trimmed_lower_faces.append(lower_face[:max_frames_in_batch, :, :, :].unsqueeze(0))
+        trimmed_speeches.append(speech[:, :max_samples_in_batch].unsqueeze(0))
+
+    lower_faces_tensor = torch.cat(trimmed_lower_faces, dim=0)
+    speeches_tensor = torch.cat(trimmed_speeches, dim=0)
+
+    face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
+
+    return lower_faces_tensor, speeches_tensor, face_crop_tensor
+
+
 class AVSpeech(Dataset):
     def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
         super(AVSpeech, self).__init__(*args, **kwargs)
@@ -101,11 +121,12 @@ def main():
 
     ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/datasets/avspeech', mode='test')
     dl = DataLoader(ds,
-                    batch_size=1,
+                    batch_size=8,
                     shuffle=False,
                     num_workers=0,
                     pin_memory=False,
-                    drop_last=True)
+                    drop_last=True,
+                    collate_fn=av_speech_collate_fn)
 
     from IPython.display import Audio, display
 
