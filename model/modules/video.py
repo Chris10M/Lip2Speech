@@ -3,9 +3,9 @@ import torch.nn.functional as F
 from torch import nn
 
 try:
-    from .backbone import ShuffleNetV2
+    from .video_backbone import ShuffleNetV2
 except:
-    from backbone import ShuffleNetV2
+    from video_backbone import ShuffleNetV2
 
 
 def threeD_to_2D_tensor(x):
