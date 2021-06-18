@@ -63,7 +63,7 @@ def main():
             if english:
                 english_vidinfos.append(vidinfos[y_id])
 
-        with open('english_vidinfos.pickle', 'wb') as pickle_file:
+        with open(f'{split}.pickle', 'wb') as pickle_file:
             pickle.dump(english_vidinfos, pickle_file)
 
         print(f'Done {i} of {len(keys)}')
