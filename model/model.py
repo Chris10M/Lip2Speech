@@ -36,7 +36,7 @@ class NoNameModel(nn.Module):
         video_lengths = video_lengths // 2
 
         face_pair_1 = self.vgg_face(face_frames[:, 0, :, :, :])
-        face_pair_2 = self.vgg_face(face_frames[:, 1, :, :, :])
+        # face_pair_2 = self.vgg_face(face_frames[:, 1, :, :, :])
 
         face_features = face_pair_1
 
@@ -48,7 +48,6 @@ class NoNameModel(nn.Module):
         
         visual_features = torch.cat([face_features, video_features], dim=2)
 
-                             # encoder_outputs, mels, text_lengths, output_lengths                
         outputs = self.decoder(visual_features, melspecs, video_lengths, melspec_lengths)
 
         return outputs
