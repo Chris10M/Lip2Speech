@@ -21,6 +21,7 @@ except:
     from preprocess import VidInfo
 
 
+ROOT_PATH = '/home/hlcv_team028/Project/Datasets/AVSpeech'
 BATCH_SIZE = 16
 
 
@@ -34,7 +35,7 @@ def main():
     fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
 
     for vid_idx, vidinfo in enumerate(vidinfos):
-        video_pth = vidinfo.out_video_filename
+        video_pth = os.path.join(ROOT_PATH, vidinfo.out_video_filename)
         
         frame_index = 0
 
