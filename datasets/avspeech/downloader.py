@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import traceback
 import os
 import sys
 import pickle
@@ -32,6 +33,8 @@ def download(vidinfo):
             meta_info = ydl.extract_info(url=yt_url, download=False)
             download_url = meta_info['url']
     except:
+        traceback.print_exc()
+        
         return_msg = '{}, ERROR (youtube)!'.format(vidinfo.yt_id)
         return return_msg
 
@@ -46,6 +49,8 @@ def download(vidinfo):
         ffmpeg.output(stream.audio, vidinfo.out_audio_filename, ac=1, acodec='pcm_s16le', ar=16000).run_async(overwrite_output=True, quiet=True)
 
     except:
+        traceback.print_exc()
+
         return_msg = '{}, ERROR (ffmpeg)!'.format(vidinfo.yt_id)
         return return_msg
 
