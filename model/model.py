@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from .modules import AudioExtractor, VideoExtractor, VGG_16
+    from .modules import AudioExtractor, VideoExtractor, VGG_16, Decoder
 except ModuleNotFoundError: 
-    from modules import AudioExtractor, VideoExtractor, VGG_16
+    from modules import AudioExtractor, VideoExtractor, VGG_16, Decoder
 
 
 class NoNameModel(nn.Module):
@@ -18,6 +18,8 @@ class NoNameModel(nn.Module):
 
         self.video_fe = VideoExtractor(video_input_size)
 
+        self.decoder = Decoder()
+        
         self._train_mode = train
 
         if train:   
@@ -27,24 +29,24 @@ class NoNameModel(nn.Module):
 
         self.video_pool = torch.nn.AvgPool2d((2, 1), stride=(2, 1))
 
-    def forward(self, video_frames, face_frames, audio_frames):
+    def forward(self, video_frames, face_frames, audio_frames, video_lengths, output_lengths):
         video_features = self.video_fe(video_frames)
         video_features = self.video_pool(video_features) # Assuming each lip-movement takes at least 2 frame. Intution: reduce frames to help LSTM to capture properly(longer dependacy issue) and also improve compute performance. 
 
         face_features = self.vgg_face(face_frames)
 
-        if self._train_mode:
-            audio_identity_features = self.wav2vec.identity_features(audio_frames)
+        audio_identity_features = self.wav2vec.identity_features(audio_frames)
         
         N, T, C = video_features.shape
 
         face_features = face_features.unsqueeze(1).repeat(1, T, 1)
         
         visual_features = torch.cat([face_features, video_features], dim=2)
-                
-        
-        # torch.cat()
 
+                             # encoder_outputs, mels, text_lengths, output_lengths                
+        outputs = self.decoder(visual_features, mels, video_lengths, output_lengths)
+
+        return outputs
 
 def main():
     fp = '/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7'

@@ -2,26 +2,19 @@ import random
 import torch
 import torchvision
 import torchaudio
-
-from torch._C import dtype
-
-from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
-
-from logging import Logger
-import imutils
 import cv2
-import os.path as osp
 import os
-from PIL import Image
 import numpy as np
 import json
-import face_alignment
+from torch.utils.data import Dataset, DataLoader
+from logging import Logger
 
 
-def av_speech_collate_fn(batch):
+def av_speech_collate_fn_trim(batch):
     lower_faces, speeches, face_crop = zip(*batch)
     
+    N = len(lower_faces)
     max_frames_in_batch = min([l.shape[0] for l in lower_faces])
     max_samples_in_batch = min([s.shape[1] for s in speeches])
     
@@ -36,7 +29,34 @@ def av_speech_collate_fn(batch):
 
     face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
 
-    return lower_faces_tensor, speeches_tensor, face_crop_tensor
+    return (lower_faces_tensor, [max_frames_in_batch for _ in range(N)]),\
+              (speeches_tensor, [max_samples_in_batch for _ in range(N)]), face_crop_tensor
+
+
+def av_speech_collate_fn_pad(batch):
+    lower_faces, speeches, face_crop = zip(*batch)
+    
+    max_frames_in_batch = max([l.shape[0] for l in lower_faces])
+    max_samples_in_batch = max([s.shape[1] for s in speeches])
+
+    padded_lower_faces = torch.zeros(len(lower_faces), max_frames_in_batch, *tuple(lower_faces[0].shape[1:]))
+    padded_speeches = torch.zeros(len(speeches), 1, max_samples_in_batch)
+
+    video_lengths = list()
+    audio_lengths = list()
+    for idx, (lower_face, speech) in enumerate(zip(lower_faces, speeches)):
+        T = lower_face.shape[0]
+        video_lengths.append(T)
+
+        padded_lower_faces[idx, :T, :, :, :] = lower_face
+
+        S = speech.shape[-1]
+        audio_lengths.append(S)
+        padded_speeches[idx, :, :S] = speech
+        
+    face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
+
+    return (padded_lower_faces, video_lengths), (padded_speeches, audio_lengths), face_crop_tensor
 
 
 class AVSpeech(Dataset):
@@ -119,14 +139,14 @@ class AVSpeech(Dataset):
 def main():
     cropsize = [384, 384]
 
-    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/datasets/avspeech', mode='test')
+    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
     dl = DataLoader(ds,
                     batch_size=8,
                     shuffle=False,
                     num_workers=0,
                     pin_memory=False,
                     drop_last=True,
-                    collate_fn=av_speech_collate_fn)
+                    collate_fn=av_speech_collate_fn_pad)
 
     from IPython.display import Audio, display
 
@@ -151,8 +171,8 @@ def main():
         aug_speech, sample_rate2 = torchaudio.sox_effects.apply_effects_tensor(
         speech[0], sample_rate, effects)
 
-        torchaudio.save('test.wav', speech[0], 16000)
-        torchaudio.save('aug_speech.wav', aug_speech, 16000)
+        # torchaudio.save('test.wav', speech[0], 16000)
+        # torchaudio.save('aug_speech.wav', aug_speech, 16000)
 
         # plot_waveform(waveform, sample_rate)
         # plot_specgram(waveform, sample_rate)
