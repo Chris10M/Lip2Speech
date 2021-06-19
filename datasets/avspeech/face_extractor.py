@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from operator import pos
 import sys
 from logging import Logger
