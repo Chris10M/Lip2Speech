@@ -27,7 +27,7 @@ BATCH_SIZE = 16
 
 def main():
     folder = sys.argv[1]
-    assert folder.endswith(('test', 'train'))
+    assert folder in ('test', 'train')
 
     with open(f'{folder}.pickle', 'rb') as pickle_file:
         vidinfos = pickle.load(pickle_file)
