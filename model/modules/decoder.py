@@ -14,7 +14,9 @@ class Decoder(nn.Module):
         super().__init__()
 
         hparams = create_hparams()
-        
+        self.n_mel_channels = hparams.n_mel_channels
+        self.mask_padding = hparams.mask_padding
+
         self.decoder = TacotronDecoder(hparams)
         self.postnet = Postnet(hparams)
 

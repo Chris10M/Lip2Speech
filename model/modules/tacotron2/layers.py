@@ -1,8 +1,9 @@
 import torch
 from librosa.filters import mel as librosa_mel_fn
-from .audio_processing import dynamic_range_compression
-from .audio_processing import dynamic_range_decompression
-from .stft import STFT
+try:
+    from .audio_processing import dynamic_range_compression, dynamic_range_decompression; from .stft import STFT
+except:
+    from audio_processing import dynamic_range_compression, dynamic_range_decompression; from stft import STFT
 
 
 class LinearNorm(torch.nn.Module):
@@ -42,8 +43,9 @@ class ConvNorm(torch.nn.Module):
 class TacotronSTFT(torch.nn.Module):
     def __init__(self, filter_length=1024, hop_length=256, win_length=1024,
                  n_mel_channels=80, sampling_rate=22050, mel_fmin=0.0,
-                 mel_fmax=8000.0):
+                 mel_fmax=8000.0, max_wav_value=32768.0):
         super(TacotronSTFT, self).__init__()
+        self.max_wav_value = max_wav_value
         self.n_mel_channels = n_mel_channels
         self.sampling_rate = sampling_rate
         self.stft_fn = STFT(filter_length, hop_length, win_length)

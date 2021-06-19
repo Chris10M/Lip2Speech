@@ -1,11 +1,7 @@
-import tensorflow as tf
-# from text import symbols
-
-
-def create_hparams(hparams_string=None, verbose=False):
+def create_hparams():
     """Create model hyperparameters. Parse nondefault from given string."""
 
-    hparams = tf.contrib.training.HParams(
+    hparams = dict(
         ################################
         # Experiment Parameters        #
         ################################
@@ -50,7 +46,7 @@ def create_hparams(hparams_string=None, verbose=False):
         # Encoder parameters
         # encoder_kernel_size=5,
         # encoder_n_convolutions=3,
-        # encoder_embedding_dim=512,
+        encoder_embedding_dim=1536,
 
         # Decoder parameters
         n_frames_per_step=1,  # currently only 1 is supported
@@ -84,12 +80,19 @@ def create_hparams(hparams_string=None, verbose=False):
         batch_size=64,
         mask_padding=True  # set model's padded outputs to padded values
     )
+    
+    class HParams:
+        def __init__(self, dictionary):
+            for k, v in dictionary.items():
+                setattr(self, k, v)
 
-    if hparams_string:
-        tf.logging.info('Parsing command line hparams: %s', hparams_string)
-        hparams.parse(hparams_string)
+    hparams = HParams(hparams)
+    
+    # if hparams_string:
+    #     tf.logging.info('Parsing command line hparams: %s', hparams_string)
+    #     hparams.parse(hparams_string)
 
-    if verbose:
-        tf.logging.info('Final parsed hparams: %s', hparams.values())
+    # if verbose:
+    #     tf.logging.info('Final parsed hparams: %s', hparams.values())
 
     return hparams
