@@ -1,5 +1,6 @@
 import random
 import torch
+from torch._C import dtype
 import torchvision
 import torchaudio
 import torchvision.transforms as transforms
@@ -153,11 +154,14 @@ class AVSpeech(Dataset):
 
         faces = list()
         for idx in range(N):
-            x1, y1, x2, y2 = frame_info[str(idx)]['face_coords']
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            face_coords = np.array(frame_info[str(idx)]['face_coords'], dtype=np.int)
+            face_coords[face_coords < 0] = 0
+            x1, y1, x2, y2 = face_coords
 
             face = frames[idx, :, y1: y2, x1: x2]
             
+            if face.shape[1] < 16 or face.shape[2] < 16: return self.get_another_item()
+
             faces.append(face)
 
         if len(faces) == 0:
