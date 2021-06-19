@@ -4,15 +4,20 @@ import torchvision
 import torchaudio
 import torchvision.transforms as transforms
 import cv2
+import traceback
 import os
 import numpy as np
 import json
 from torch.utils.data import Dataset, DataLoader
 from logging import Logger
 
+try: from .utils import get_mel
+except: from utils import get_mel
+
 
 def av_speech_collate_fn_trim(batch):
-    lower_faces, speeches, face_crop = zip(*batch)
+    "NOTE: WILL NOT WORK WITH THE NEW CODE, HAVE NOT CHANGED IT."
+    lower_faces, speeches, melspecs, face_crop = zip(*batch)
     
     N = len(lower_faces)
     max_frames_in_batch = min([l.shape[0] for l in lower_faces])
@@ -20,7 +25,7 @@ def av_speech_collate_fn_trim(batch):
     
     trimmed_lower_faces = list()
     trimmed_speeches = list()
-    for lower_face, speech in zip(lower_faces, speeches):
+    for lower_face, speech, melspec in zip(lower_faces, speeches, melspecs):
         trimmed_lower_faces.append(lower_face[:max_frames_in_batch, :, :, :].unsqueeze(0))
         trimmed_speeches.append(speech[:, :max_samples_in_batch].unsqueeze(0))
 
@@ -34,17 +39,21 @@ def av_speech_collate_fn_trim(batch):
 
 
 def av_speech_collate_fn_pad(batch):
-    lower_faces, speeches, face_crop = zip(*batch)
+    lower_faces, speeches, melspecs, face_crop = zip(*batch)
     
     max_frames_in_batch = max([l.shape[0] for l in lower_faces])
     max_samples_in_batch = max([s.shape[1] for s in speeches])
+    max_melspec_samples_in_batch = max([m.shape[1] for m in melspecs])
 
     padded_lower_faces = torch.zeros(len(lower_faces), max_frames_in_batch, *tuple(lower_faces[0].shape[1:]))
     padded_speeches = torch.zeros(len(speeches), 1, max_samples_in_batch)
+    padded_melspecs = torch.zeros(len(melspecs), melspecs[0].shape[0], max_melspec_samples_in_batch)
+    mel_gate_padded = torch.zeros(len(melspecs), max_melspec_samples_in_batch)
 
     video_lengths = list()
     audio_lengths = list()
-    for idx, (lower_face, speech) in enumerate(zip(lower_faces, speeches)):
+    melspec_lengths = list()
+    for idx, (lower_face, speech, melspec) in enumerate(zip(lower_faces, speeches, melspecs)):
         T = lower_face.shape[0]
         video_lengths.append(T)
 
@@ -54,20 +63,41 @@ def av_speech_collate_fn_pad(batch):
         audio_lengths.append(S)
         padded_speeches[idx, :, :S] = speech
         
-    face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
+        M = melspec.shape[-1]
+        melspec_lengths.append(M)
+        padded_melspecs[idx, :, :M] = melspec
 
-    return (padded_lower_faces, video_lengths), (padded_speeches, audio_lengths), face_crop_tensor
+        mel_gate_padded[idx, M-1:] = 1.0
+
+    face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
+    padded_lower_faces = padded_lower_faces.permute(0, 2, 1, 3, 4)
+
+    video_lengths = torch.tensor(video_lengths)
+    audio_lengths = torch.tensor(audio_lengths)
+    melspec_lengths = torch.tensor(melspec_lengths)
+
+    return (padded_lower_faces, video_lengths), (padded_speeches, audio_lengths), (padded_melspecs, melspec_lengths, mel_gate_padded), face_crop_tensor
 
 
 class AVSpeech(Dataset):
-    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
+    def __init__(self, rootpth, stft, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
         super(AVSpeech, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
         self.rootpth = rootpth
+        self.stft = stft
 
-        self.face_recog_resize = transforms.Resize((224, 224))
-        self.face_resize = transforms.Resize(face_size)
+        self.face_recog_resize = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.Lambda(lambda im: im / 255.0),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ])
+
+        self.face_resize = transforms.Compose([
+            transforms.Resize(face_size),
+            transforms.Lambda(lambda im: im / 255.0),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ])
 
         self.mode = mode
         self.demo = demo
@@ -101,8 +131,13 @@ class AVSpeech(Dataset):
         item = self.items[idx]
         
         video_pth, audio_pth, frame_info_path = item
+        
+        try:
+            speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)
+        except:
+            traceback.print_exc()
+            return self.get_another_item()
 
-        speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)
         assert sampling_rate == 16000
         
         if speech.shape[0] == 0:
@@ -128,18 +163,29 @@ class AVSpeech(Dataset):
         if len(faces) == 0:
             return self.get_another_item()
 
-        face_indices = (torch.rand(1) * N).int()
+        face_indices = (torch.rand(2) * N).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
-
         lower_faces = torch.cat([self.face_resize(face).unsqueeze(0) for face in faces], dim=0)
 
-        return lower_faces, speech, face_crop
+        melspec = get_mel(self.stft, speech)
+        
+        return lower_faces, speech, melspec, face_crop
 
 
 def main():
-    cropsize = [384, 384]
+    import sys; sys.path.append('../../model/modules/tacotron2')
+    from hparams import create_hparams
+    from layers import TacotronSTFT
 
-    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
+    hparams = create_hparams()
+    stft = TacotronSTFT(hparams.filter_length, hparams.hop_length, hparams.win_length,
+                        hparams.n_mel_channels, hparams.sampling_rate, hparams.mel_fmin,
+                        hparams.mel_fmax, hparams.max_wav_value)
+
+    
+    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', stft, mode='test')
+    ds[1]
+
     dl = DataLoader(ds,
                     batch_size=8,
                     shuffle=False,

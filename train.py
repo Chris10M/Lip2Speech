@@ -1,7 +1,8 @@
+from soundfile import SoundFile
+import torchaudio
 from logger import setup_logger
 import torch.multiprocessing as mp
 import os
-
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -16,10 +17,12 @@ import datetime
 import argparse
 import imutils
 
-from datasets.avspeech.dataset import AVSpeech
+from datasets.avspeech.dataset import AVSpeech, av_speech_collate_fn_pad
 from train_utils.optimizer import Optimzer
-from train_utils.losses import Loss
+from train_utils.losses import Tacotron2Loss
 from model import model
+from model.modules.tacotron2.hparams import create_hparams
+from model.modules.tacotron2.layers import TacotronSTFT
 # from evaluate import evaluate_net
 
 
@@ -47,18 +50,19 @@ def set_model_logger(net):
 
 
 def main():
-    ds = AVSpeech('datasets/avspeech', mode='test')
+    hparams = create_hparams()
+    stft = TacotronSTFT(hparams.filter_length, hparams.hop_length, hparams.win_length,
+                    hparams.n_mel_channels, hparams.sampling_rate, hparams.mel_fmin,
+                    hparams.mel_fmax, hparams.max_wav_value)
 
-    # n_classes = ds.n_classes    
-    # net = model.get_network(n_classes)
+    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', stft, mode='test')
 
-    # set_model_logger(net)
-    
+    net = model.get_network().to(device)
+    set_model_logger(net)
     
     saved_path = ''
     
     max_iter = 64000
-    optim_iter = 64 
     save_iter = 1000
     n_img_per_gpu = 6
     n_workers = min(n_img_per_gpu, 16)
@@ -68,10 +72,12 @@ def main():
                     shuffle=True,
                     num_workers=n_workers,
                     pin_memory=True,
-                    drop_last=True)
+                    drop_last=True, 
+                    collate_fn=av_speech_collate_fn_pad)
 
-    # criteria = 
-    # optim = Optimzer(net, 0, max_iter)
+
+    reconstruction_criterion = Tacotron2Loss()
+    optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay)
 
     min_eval_loss = 1e5
     epoch = 0
@@ -125,35 +131,30 @@ def main():
             
             batch = next(diter)
 
-        lower_faces_tensor, speeches_tensor, face_crop_tensor = batch
+        (videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
 
-        lower_faces_tensor = lower_faces_tensor.to(device)
-        speeches_tensor = speeches_tensor.to(device) 
-        face_crop_tensor = face_crop_tensor.to(device)
+        videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
+        video_lengths, audio_lengths, melspec_lengths = video_lengths.to(device), audio_lengths.to(device), melspec_lengths.to(device)
+        mel_gates = mel_gates.to(device)
+
+        outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
         
-        # if not start_training:
-        #     start_training = True
-
-        outs = net(im)
-        if isinstance(outs, tuple):  # Depending on the model, AuxLoss may be also computed.
-            loss = criteria(outs[0], lb)
-            for out in outs[1:]:
-                loss += criteria(out, lb)
-        else:
-            out = outs
-            loss = criteria(out, lb)
-
-        loss /= optim_iter
-
+        mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
+    
+        loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
+    
         loss.backward()
 
-        if it % optim_iter == 0:  # Gradient accumulation.
-            optim.update_lr()
+        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
 
-            optim.step()
-            optim.zero_grad()
+            # optim.update_lr()
+
+        optim.step()
+        optim.zero_grad()
 
         loss_avg.append(loss.item())
+
+        print(it)
 
         if (it + 1) % save_iter == 0 or os.path.isfile('save'):
             save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')

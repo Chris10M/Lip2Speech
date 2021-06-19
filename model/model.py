@@ -29,13 +29,18 @@ class NoNameModel(nn.Module):
 
         self.video_pool = torch.nn.AvgPool2d((2, 1), stride=(2, 1))
 
-    def forward(self, video_frames, face_frames, audio_frames, video_lengths, output_lengths):
+    def forward(self, video_frames, face_frames, audio_frames, melspecs, video_lengths, audio_lengths, melspec_lengths):
         video_features = self.video_fe(video_frames)
+        
         video_features = self.video_pool(video_features) # Assuming each lip-movement takes at least 2 frame. Intution: reduce frames to help LSTM to capture properly(longer dependacy issue) and also improve compute performance. 
+        video_lengths = video_lengths // 2
 
-        face_features = self.vgg_face(face_frames)
+        face_pair_1 = self.vgg_face(face_frames[:, 0, :, :, :])
+        face_pair_2 = self.vgg_face(face_frames[:, 1, :, :, :])
 
-        audio_identity_features = self.wav2vec.identity_features(audio_frames)
+        face_features = face_pair_1
+
+        # audio_identity_features = self.wav2vec.identity_features(audio_frames)
         
         N, T, C = video_features.shape
 
@@ -44,9 +49,16 @@ class NoNameModel(nn.Module):
         visual_features = torch.cat([face_features, video_features], dim=2)
 
                              # encoder_outputs, mels, text_lengths, output_lengths                
-        outputs = self.decoder(visual_features, mels, video_lengths, output_lengths)
+        outputs = self.decoder(visual_features, melspecs, video_lengths, melspec_lengths)
 
         return outputs
+
+
+def get_network():
+    fp = '/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7'
+
+    return NoNameModel(face_reconizer_path=fp)
+
 
 def main():
     fp = '/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7'
