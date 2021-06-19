@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import pickle
@@ -5,11 +7,13 @@ import youtube_dl
 import ffmpeg
 from multiprocessing.pool import ThreadPool
 
-
 try:
     from .preprocess import VidInfo
 except:
     from preprocess import VidInfo
+
+
+ROOT_PATH = '/home/hlcv_team028/Project/Datasets/AVSpeech'
 
 
 def download(vidinfo):
@@ -30,7 +34,10 @@ def download(vidinfo):
     except:
         return_msg = '{}, ERROR (youtube)!'.format(vidinfo.yt_id)
         return return_msg
-        
+
+    vidinfo.out_video_filename = os.path.join(ROOT_PATH, vidinfo.out_video_filename)
+    vidinfo.out_audio_filename = os.path.join(ROOT_PATH, vidinfo.out_audio_filename)
+
     try:
         stream = ffmpeg.input(download_url, ss=vidinfo.start_time, to=vidinfo.end_time)
 
