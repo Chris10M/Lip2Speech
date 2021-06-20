@@ -13,6 +13,8 @@ class AudioExtractor(nn.Module):
         model = model[0]
 
         if fine_tuning: 
+            # model.eval()
+            
             for param in model.parameters():
                 param.requires_grad = False
                 
