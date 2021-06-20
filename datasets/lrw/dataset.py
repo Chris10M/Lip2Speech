@@ -55,12 +55,9 @@ class LRW(Dataset):
   
         video_pth, audio_pth, frame_info_path = item
         
-        speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)
-        assert sampling_rate == 16000
-  
-    
+        speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)    
         frames, _, _ = torchvision.io.read_video(video_pth)
-        frames = frames[:25 * self.frame_length].permute(0, 3, 1, 2)
+        frames = frames.permute(0, 3, 1, 2)
         
         with open(frame_info_path, 'r') as json_path:
             frame_info = json.load(json_path)

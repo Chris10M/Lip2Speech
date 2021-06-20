@@ -23,7 +23,7 @@ import ffmpeg
 import torch.nn.functional as F
 from tqdm import tqdm
 
-fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False, device = 'cpu')
+fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
 
 def extract_face(video_pth):
   BATCH_SIZE = 8
@@ -42,11 +42,12 @@ def extract_face(video_pth):
   with open(json_path, 'w') as json_file:
       json.dump(frame_info, json_file)
 
-def preprocess(data_path):
-  for root, d, filenames in (os.walk(data_path)):
+def preprocess(data_path, split):
+  for word in tqdm(os.listdir(data_path)):
+    filenames = os.listdir(os.path.join(data_path, word, split))
     videos = [f for f in filenames if f.endswith('.mp4')]
-    for filename in tqdm(videos):
-        video_path = os.path.join(root, filename)
+    for filename in (videos):
+        video_path = os.path.join(data_path, word, split, filename)
         try:
             # Separate Audio from video 
             stream = ffmpeg.input(video_path)
@@ -60,7 +61,9 @@ def preprocess(data_path):
   return 'DONE!'
 def main():
     data_path = sys.argv[1]
-    print(preprocess(data_path))
+    split = sys.argv[2]
+
+    print(preprocess(data_path, split))
 
 
 if __name__ == '__main__':
