@@ -12,6 +12,8 @@ import json
 from torch.utils.data import Dataset, DataLoader
 from logging import Logger
 
+from torchvision.transforms.transforms import Lambda
+
 try: from .utils import get_mel
 except: from utils import get_mel
 
@@ -91,13 +93,13 @@ class AVSpeech(Dataset):
 
         self.face_recog_resize = transforms.Compose([
             transforms.Resize((224, 224)),
-            transforms.Lambda(lambda im: im / 255.0),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Lambda(lambda im: torch.index_select(im.float(), 0, torch.LongTensor([2, 1, 0]))), # RGB2BGR
+            transforms.Normalize((129.1863, 104.7624, 93.5940), (1.0, 1.0, 1.0)),
             ])
 
         self.face_resize = transforms.Compose([
             transforms.Resize(face_size),
-            transforms.Lambda(lambda im: im / 255.0),
+            transforms.Lambda(lambda im: im.float() / 255.0),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
 
