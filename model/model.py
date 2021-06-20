@@ -40,7 +40,7 @@ class NoNameModel(nn.Module):
 
         face_features = face_pair_1
 
-        # audio_identity_features = self.wav2vec.identity_features(audio_frames)
+        audio_identity_features = self.wav2vec.identity_features(audio_frames)
         
         N, T, C = video_features.shape
 
@@ -50,13 +50,16 @@ class NoNameModel(nn.Module):
 
         outputs = self.decoder(visual_features, melspecs, video_lengths, melspec_lengths)
 
-        return outputs
+        return outputs, (face_pair_1, audio_identity_features)
 
 
-def get_network():
+def get_network(mode):
     fp = '/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7'
+    wav2vec_path='/media/ssd/christen-rnd/Experiments/Lip2Speech/wav2vec_large.pt'
 
-    return NoNameModel(face_reconizer_path=fp)
+    assert mode in ('train', 'test')
+
+    return NoNameModel(face_reconizer_path=fp, wav2vec_path=wav2vec_path, train=(mode == 'train'))
 
 
 def main():

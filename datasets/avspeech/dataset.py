@@ -72,6 +72,7 @@ def av_speech_collate_fn_pad(batch):
 
     face_crop_tensor = torch.cat([f.unsqueeze(0) for f in face_crop], dim=0)
     padded_lower_faces = padded_lower_faces.permute(0, 2, 1, 3, 4)
+    padded_speeches = padded_speeches.squeeze(1) 
 
     video_lengths = torch.tensor(video_lengths)
     audio_lengths = torch.tensor(audio_lengths)

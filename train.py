@@ -19,7 +19,7 @@ import imutils
 
 from datasets.avspeech.dataset import AVSpeech, av_speech_collate_fn_pad
 from train_utils.optimizer import Optimzer
-from train_utils.losses import Tacotron2Loss
+from train_utils.losses import *
 from model import model
 from model.modules.tacotron2.hparams import create_hparams
 from model.modules.tacotron2.layers import TacotronSTFT
@@ -57,7 +57,7 @@ def main():
 
     ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', stft, mode='test')
 
-    net = model.get_network().to(device)
+    net = model.get_network('train').to(device)
     set_model_logger(net)
     
     saved_path = ''
@@ -77,6 +77,8 @@ def main():
 
 
     reconstruction_criterion = Tacotron2Loss()
+    contrastive_criterion = MiniBatchConstrastiveLoss()
+    
     optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay)
 
     min_eval_loss = 1e5
@@ -136,13 +138,13 @@ def main():
         videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
         video_lengths, audio_lengths, melspec_lengths = video_lengths.to(device), audio_lengths.to(device), melspec_lengths.to(device)
         mel_gates = mel_gates.to(device)
-
-        outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
+        outputs, constrastive_features = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
         
         mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
     
         loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
-    
+        loss += contrastive_criterion(constrastive_features)
+
         loss.backward()
 
         grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
