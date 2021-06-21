@@ -14,6 +14,8 @@ class Decoder(nn.Module):
         super().__init__()
 
         hparams = create_hparams()
+        hparams.n_mel_channels = hparams.filter_length // 2 + 1 # Linear Spectogram usage
+
         self.n_mel_channels = hparams.n_mel_channels
         self.mask_padding = hparams.mask_padding
 

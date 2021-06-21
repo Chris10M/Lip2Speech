@@ -22,7 +22,6 @@ from train_utils.optimizer import Optimzer
 from train_utils.losses import *
 from model import model
 from model.modules.tacotron2.hparams import create_hparams
-from model.modules.tacotron2.layers import TacotronSTFT
 # from evaluate import evaluate_net
 
 
@@ -51,11 +50,8 @@ def set_model_logger(net):
 
 def main():
     hparams = create_hparams()
-    stft = TacotronSTFT(hparams.filter_length, hparams.hop_length, hparams.win_length,
-                    hparams.n_mel_channels, hparams.sampling_rate, hparams.mel_fmin,
-                    hparams.mel_fmax, hparams.max_wav_value)
-
-    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', stft, mode='test')
+    
+    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
 
     net = model.get_network('train').to(device)
     set_model_logger(net)
