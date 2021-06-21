@@ -1,4 +1,5 @@
 import random
+from librosa.filters import mel
 import torch
 from torch._C import dtype
 import torchvision
@@ -14,8 +15,8 @@ from logging import Logger
 
 from torchvision.transforms.transforms import Lambda
 
-try: from .utils import get_mel
-except: from utils import get_mel
+try: from .utils import LinearSpectrogram
+except: from utils import LinearSpectrogram
 
 
 def av_speech_collate_fn_trim(batch):
@@ -84,12 +85,13 @@ def av_speech_collate_fn_pad(batch):
 
 
 class AVSpeech(Dataset):
-    def __init__(self, rootpth, stft, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
+    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
         super(AVSpeech, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
         self.rootpth = rootpth
-        self.stft = stft
+        
+        self.linear_spectogram = LinearSpectrogram()
 
         self.face_recog_resize = transforms.Compose([
             transforms.Resize((224, 224)),
@@ -139,7 +141,7 @@ class AVSpeech(Dataset):
         try:
             speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)
         except:
-            traceback.print_exc()
+            # traceback.print_exc()
             return self.get_another_item()
 
         assert sampling_rate == 16000
@@ -174,23 +176,13 @@ class AVSpeech(Dataset):
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
         lower_faces = torch.cat([self.face_resize(face).unsqueeze(0) for face in faces], dim=0)
 
-        melspec = get_mel(self.stft, speech)
-        
+        melspec = self.linear_spectogram(speech).squeeze(0)
+
         return lower_faces, speech, melspec, face_crop
 
 
-def main():
-    import sys; sys.path.append('../../model/modules/tacotron2')
-    from hparams import create_hparams
-    from layers import TacotronSTFT
-
-    hparams = create_hparams()
-    stft = TacotronSTFT(hparams.filter_length, hparams.hop_length, hparams.win_length,
-                        hparams.n_mel_channels, hparams.sampling_rate, hparams.mel_fmin,
-                        hparams.mel_fmax, hparams.max_wav_value)
-
-    
-    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', stft, mode='test')
+def main():    
+    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
     ds[1]
 
     dl = DataLoader(ds,
