@@ -1,21 +1,13 @@
-from soundfile import SoundFile
-import torchaudio
 from logger import setup_logger
-import torch.multiprocessing as mp
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
-import torch.distributed as dist
 import hashlib
 import os
 import os.path as osp
 import logging
 import time
 import datetime
-import argparse
-import imutils
 
 from datasets.avspeech.dataset import AVSpeech, av_speech_collate_fn_pad
 from train_utils.optimizer import Optimzer
@@ -30,13 +22,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class Logger:
     logger = None
-    ModelSavePath = 'model'
+    ModelSavePath = 'savedmodels'
 
 
 def set_model_logger(net):
     model_info = str(net)
 
-    respth = f'savedmodels/{hashlib.md5(model_info.encode()).hexdigest()}'
+    respth = f'{Logger.ModelSavePath}/{hashlib.md5(model_info.encode()).hexdigest()}'
     Logger.ModelSavePath = respth
 
     if not osp.exists(respth): os.makedirs(respth)
@@ -56,12 +48,12 @@ def main():
     net = model.get_network('train').to(device)
     set_model_logger(net)
     
-    saved_path = ''
+    saved_path = 'savedmodels/3694dfbd82dbd1b9d660518e34523228/3000_1624297359.pth'
     
     max_iter = 64000
     save_iter = 1000
     n_img_per_gpu = 6
-    n_workers = min(n_img_per_gpu, 16)
+    n_workers = min(n_img_per_gpu, os.cpu_count())
     
     dl = DataLoader(ds,
                     batch_size=n_img_per_gpu,
@@ -75,7 +67,7 @@ def main():
     reconstruction_criterion = Tacotron2Loss()
     contrastive_criterion = MiniBatchConstrastiveLoss()
     
-    optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay)
+    optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
 
     min_eval_loss = 1e5
     epoch = 0
@@ -119,7 +111,6 @@ def main():
     st = glob_st = time.time()
     diter = iter(dl)
 
-    # start_training = False
     for it in range(start_it, max_iter):
         try:
             batch = next(diter)
@@ -152,18 +143,16 @@ def main():
 
         loss_avg.append(loss.item())
 
-        print(it)
+        if (it + 1) % save_iter == 0:
+                save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
 
-        if (it + 1) % save_iter == 0 or os.path.isfile('save'):
-            save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
-
-            evaluation = evaluate_net(args, net)
-            Logger.logger.info(f"Model@{it + 1}\n{evaluation}")
+            # evaluation = evaluate_net(args, net)
+            # Logger.logger.info(f"Model@{it + 1}\n{evaluation}")
             
-            eval_loss = evaluation.loss()
-            optim.reduce_lr_on_plateau(eval_loss)
+            # eval_loss = evaluation.loss()
+            # optim.reduce_lr_on_plateau(eval_loss)
 
-            if eval_loss < min_eval_loss:  
+            # if eval_loss < min_eval_loss:  
                 print(f'Saving model at: {(it + 1)}, save_pth: {save_pth}')
                 torch.save({
                     'epoch': epoch,
@@ -174,7 +163,7 @@ def main():
                 }, save_pth)
                 print(f'model at: {(it + 1)} Saved')
 
-                min_eval_loss = eval_loss
+                # min_eval_loss = eval_loss
 
         #   print training log message
         if (it+1) % msg_iter == 0:

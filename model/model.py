@@ -52,6 +52,21 @@ class NoNameModel(nn.Module):
 
         return outputs, (face_pair_1, audio_identity_features)
 
+    def inference(self, video_frames, face_frames):
+        with torch.no_grad():
+            video_features = self.video_fe(video_frames)
+            
+            video_features = self.video_pool(video_features)
+            face_features = self.vgg_face(face_frames[:, 0, :, :, :])
+            
+            N, T, C = video_features.shape
+            face_features = face_features.unsqueeze(1).repeat(1, T, 1)
+
+            visual_features = torch.cat([face_features, video_features], dim=2)
+            outputs = self.decoder.inference(visual_features)
+
+        return outputs
+
 
 def get_network(mode):
     fp = '/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7'

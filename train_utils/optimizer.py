@@ -5,7 +5,9 @@ import torch.optim as optim
 class Optimzer:
     def __init__(self, model, start_iter, max_iter, lr=0.01, momentum=0.9, weight_decay=0.0005, patience=2, power=0.9):
         self.net = model
-        self.optim: optim.Optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        # self.optim: optim.Optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        self.optim: optim.Optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
 
         self.lr = lr
 
@@ -23,13 +25,8 @@ class Optimzer:
         lr = self.lr * math.pow((1 - (self.current_iter / self.max_iter)), self.power) * self.lr_multiplier
 
         for pg in self.optim.param_groups:
-            # if pg.get('lr_mul', False):
-            #     pg['lr'] = lr * 10
-            # else:
-                pg['lr'] = lr
-        # if self.optim.defaults.get('lr_mul', False):
-        #     self.optim.defaults['lr'] = lr * 10
-        # else:
+            pg['lr'] = lr
+        
         self.optim.defaults['lr'] = lr
 
     def step(self):
@@ -66,5 +63,6 @@ class Optimzer:
             self.lr_multiplier = self.lr_multiplier * 0.9
 
             print(f'Reducing lr by: {self.lr_multiplier}')
-
+            self.update_lr()
+            
         self.eval_losses.append(loss)
