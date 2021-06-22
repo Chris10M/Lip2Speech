@@ -1,3 +1,4 @@
+from torchvision.models.shufflenetv2 import shufflenet_v2_x1_0
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -18,7 +19,7 @@ class VideoExtractor(nn.Module):
     def __init__( self, input_size, in_chns=3):
 
         super(VideoExtractor, self).__init__()        
-        shufflenet = ShuffleNetV2(input_size=input_size, width_mult=1)
+        shufflenet = shufflenet_v2_x1_0(pretrained=True)
 
         frontend_nout = 24
         self.frontend3D = nn.Sequential(
@@ -27,8 +28,12 @@ class VideoExtractor(nn.Module):
                                         nn.PReLU(num_parameters=frontend_nout),
                                         nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
                                     )
-        
-        self.trunk = nn.Sequential( shufflenet.features, shufflenet.conv_last, shufflenet.globalpool)
+                
+        self.trunk = nn.Sequential(shufflenet.stage2,
+                                   shufflenet.stage3,
+                                   shufflenet.stage4,
+                                   shufflenet.conv5,
+                                   nn.AdaptiveAvgPool2d(1))
         
     def forward(self, x):
         B, C, T, H, W = x.size()

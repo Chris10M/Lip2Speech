@@ -14,7 +14,7 @@ class VGG_16(nn.Module):
     Main Class
     """
 
-    def __init__(self, path=None):
+    def __init__(self, path):
         """
         Constructor
         """
@@ -38,8 +38,7 @@ class VGG_16(nn.Module):
         self.fc7 = nn.Linear(4096, 512)
         self.fc8 = nn.Linear(512, 512)
 
-        if path:
-            self.load_weights(path=path)
+        self.load_weights(path=path)
 
     def freeze_backbone(self):
         for param in self.parameters():
