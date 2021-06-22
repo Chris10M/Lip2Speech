@@ -94,17 +94,17 @@ class AVSpeech(Dataset):
         self.linear_spectogram = LinearSpectrogram()
 
         self.face_recog_resize = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.Lambda(lambda im: torch.index_select(im.float(), 0, torch.LongTensor([2, 1, 0]))), # RGB2BGR
-            transforms.Normalize((129.1863, 104.7624, 93.5940), (1.0, 1.0, 1.0)),
+            transforms.Resize((160, 160)),
+            transforms.Lambda(lambda im: (im.float() - 127.5) / 128.0),
             ])
 
+        self.face_size = face_size
         self.face_resize = transforms.Compose([
             transforms.Resize(face_size),
             transforms.Lambda(lambda im: im.float() / 255.0),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
-
+        
         self.mode = mode
         self.demo = demo
         
@@ -174,7 +174,14 @@ class AVSpeech(Dataset):
 
         face_indices = (torch.rand(2) * N).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
-        lower_faces = torch.cat([self.face_resize(face).unsqueeze(0) for face in faces], dim=0)
+        
+        lower_faces = list()
+        for face in faces:
+            C, H, W = face.shape
+            lower_face = face[:, H//2:, :] 
+
+            lower_faces.append(self.face_resize(lower_face).unsqueeze(0))
+        lower_faces = torch.cat(lower_faces, dim=0)
 
         melspec = self.linear_spectogram(speech).squeeze(0)
 

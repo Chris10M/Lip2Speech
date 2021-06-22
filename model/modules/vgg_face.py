@@ -9,6 +9,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchfile
 
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 class VGG_16(nn.Module):
     """
     Main Class
@@ -111,22 +115,76 @@ class VGG_16(nn.Module):
         return self.fc8(x)
 
 
+from facenet_pytorch import InceptionResnetV1
+
+
+class FaceRecognizer(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.resnet = InceptionResnetV1(pretrained='casia-webface').eval()
+
+        self.identity_projection = nn.Sequential(
+            nn.Dropout(0.2),
+            
+            nn.Linear(512, 512),
+            nn.Linear(512, 512),
+        )
+
+    def forward(self, x):
+        embeddings = self.resnet(x)
+
+        projection = self.identity_projection(embeddings)
+
+        return projection
+
+
 def main():
-    model = VGG_16().double()
-    model.load_weights('/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7')
-    im = cv2.imread("/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/images/ak.png")
-    im = torch.Tensor(im).permute(2, 0, 1).view(1, 3, 224, 224).double()
-    import numpy as np
-    model.freeze_backbone()
+    # model = VGG_16().double()
+    # model.load_weights('/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/pretrained/vgg_face_torch/VGG_FACE.t7')
+    # im = cv2.imread("/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/images/ak.png")
+    # im = torch.Tensor(im).permute(2, 0, 1).view(1, 3, 224, 224).double()
+    # import numpy as np
+    # model.freeze_backbone()
 
-    model.eval()
-    im -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).double().view(1, 3, 1, 1)
-    preds = F.softmax(model(im), dim=1)
-    print(preds.shape)
+    # model.eval()
+    # im -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).double().view(1, 3, 1, 1)
+    # preds = F.softmax(model(im), dim=1)
+    # print(preds.shape)
 
-    values, indices = preds.max(-1)
-    print(indices)
+    # values, indices = preds.max(-1)
+    # print(indices)
 
+    from facenet_pytorch import MTCNN, InceptionResnetV1
+
+    
+    mtcnn = MTCNN(
+                    image_size=160, margin=0, min_face_size=20,
+                    thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True,
+                    device=device
+    )
+
+    resnet = InceptionResnetV1(pretrained='casia-webface').eval()
+    
+    x = cv2.imread("/media/ssd/christen-rnd/Experiments/Lip2Speech/vgg_face_recognition/images/ak.png")[:, :, ::-1]
+
+    x_aligned, prob = mtcnn(x, return_prob=True)
+
+    aligned = x_aligned.unsqueeze(0)
+    e1 = resnet(aligned).detach().cpu()
+    
+    mtcnn(x, 'test.jpg', return_prob=True)
+
+    im = cv2.imread("test.jpg")[:, :, ::-1].copy()
+    im = torch.tensor(im).permute(2, 0, 1)
+    
+    x_aligned = (im.float() - 127.5) / 128.0  
+
+
+    aligned = x_aligned.unsqueeze(0)
+    e2 = resnet(aligned).detach().cpu()
+    print(e1.shape)
+    print((e2 - e1).norm())
 
 
 if __name__ == "__main__":

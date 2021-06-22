@@ -46,6 +46,7 @@ def create_hparams():
         # Encoder parameters
         # encoder_kernel_size=5,
         # encoder_n_convolutions=3,
+        # encoder_embedding_dim=1536,
         encoder_embedding_dim=1536,
 
         # Decoder parameters

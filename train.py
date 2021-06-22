@@ -1,6 +1,8 @@
+from model.modules import video
 from logger import setup_logger
 import os
 import torch
+import torchaudio
 from torch.utils.data import DataLoader
 import hashlib
 import os
@@ -48,25 +50,22 @@ def main():
     net = model.get_network('train').to(device)
     set_model_logger(net)
     
-    saved_path = 'savedmodels/3694dfbd82dbd1b9d660518e34523228/3000_1624297359.pth'
+    saved_path = 'savedmodels/31a514ea0e63bfcd93305e908b4d74e4/9000_1624362309.pth'
     
     max_iter = 64000
     save_iter = 1000
-    n_img_per_gpu = 6
+    n_img_per_gpu = 8
     n_workers = min(n_img_per_gpu, os.cpu_count())
     
     dl = DataLoader(ds,
                     batch_size=n_img_per_gpu,
-                    shuffle=True,
+                    shuffle=False,
                     num_workers=n_workers,
                     pin_memory=True,
                     drop_last=True, 
                     collate_fn=av_speech_collate_fn_pad)
 
 
-    reconstruction_criterion = Tacotron2Loss()
-    contrastive_criterion = MiniBatchConstrastiveLoss()
-    
     optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
 
     min_eval_loss = 1e5
@@ -105,23 +104,30 @@ def main():
 
         print(f'Model Loaded: {saved_path} @ start_it: {start_it}')
 
+
+    reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
+    contrastive_criterion = MiniBatchConstrastiveLoss()
+
+
     ## train loop
     msg_iter = 50
-    loss_avg = []
+    loss_avg, c_loss_avg, r_loss_avg = [], [], []
     st = glob_st = time.time()
     diter = iter(dl)
 
+    batch = next(diter)
+    
     for it in range(start_it, max_iter):
-        try:
-            batch = next(diter)
-        except StopIteration:
-            epoch += 1
-            diter = iter(dl)
+        # try:
+        #     batch = next(diter)
+        # except StopIteration:
+        #     epoch += 1
+        #     diter = iter(dl)
             
-            batch = next(diter)
+        #     batch = next(diter)
 
         (videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
-
+    
         videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
         video_lengths, audio_lengths, melspec_lengths = video_lengths.to(device), audio_lengths.to(device), melspec_lengths.to(device)
         mel_gates = mel_gates.to(device)
@@ -129,8 +135,10 @@ def main():
         
         mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
     
-        loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
-        loss += contrastive_criterion(constrastive_features)
+        r_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
+        c_loss = contrastive_criterion(constrastive_features)
+        
+        loss = r_loss + c_loss
 
         loss.backward()
 
@@ -142,6 +150,8 @@ def main():
         optim.zero_grad()
 
         loss_avg.append(loss.item())
+        c_loss_avg.append(c_loss.item()) 
+        r_loss_avg.append(r_loss.item())
 
         if (it + 1) % save_iter == 0:
                 save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
@@ -168,6 +178,8 @@ def main():
         #   print training log message
         if (it+1) % msg_iter == 0:
             loss_avg = sum(loss_avg) / len(loss_avg)
+            r_loss_avg = sum(r_loss_avg) / len(r_loss_avg)
+            c_loss_avg = sum(c_loss_avg) / len(c_loss_avg)
             
             ed = time.time()
             t_intv, glob_t_intv = ed - st, ed - glob_st
@@ -176,18 +188,22 @@ def main():
             msg = ', '.join([
                     'it: {it}/{max_it}',
                     f'epoch: {epoch}',
+                    'r_loss: {r_loss:.4f}',
+                    'c_loss: {c_loss:.4f}',
                     'loss: {loss:.4f}',
                     'eta: {eta}',
                     'time: {time:.4f}',
                 ]).format(
                     it = it+1,
                     max_it = max_iter,
+                    r_loss = r_loss_avg,
+                    c_loss = c_loss_avg,
                     loss = loss_avg,
                     time = t_intv,
                     eta = eta
                 )
             Logger.logger.info(msg)
-            loss_avg = []
+            loss_avg, c_loss_avg, r_loss_avg= [], [], []
             st = ed
 
     save_pth = osp.join(Logger.ModelSavePath, 'model_final.pth')

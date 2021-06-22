@@ -25,7 +25,6 @@ class AudioExtractor(nn.Module):
             
             nn.Linear(512, 512),
             nn.Linear(512, 512),
-            nn.Linear(512, 512),
         )
 
     def features(self, x):
