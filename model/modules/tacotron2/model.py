@@ -7,6 +7,16 @@ from .layers import ConvNorm, LinearNorm
 from .utils import to_gpu, get_mask_from_lengths
 
 
+class Sine(nn.Module):
+    def __init__(self, w0 = 1.):
+        super().__init__()
+        
+        self.w0 = nn.Parameter(torch.tensor(w0), requires_grad=True)
+
+    def forward(self, x):
+        return torch.sin(self.w0 * x)
+
+
 class LocationLayer(nn.Module):
     def __init__(self, attention_n_filters, attention_kernel_size,
                  attention_dim):
@@ -91,12 +101,12 @@ class Prenet(nn.Module):
         super(Prenet, self).__init__()
         in_sizes = [in_dim] + sizes[:-1]
         self.layers = nn.ModuleList(
-            [LinearNorm(in_size, out_size, bias=False)
+            [nn.Sequential(LinearNorm(in_size, out_size, bias=False), Sine())
              for (in_size, out_size) in zip(in_sizes, sizes)])
 
     def forward(self, x):
         for linear in self.layers:
-            x = F.dropout(F.relu(linear(x)), p=0.5, training=True)
+            x = F.dropout(linear(x), p=0.5, training=True)
         return x
 
 
@@ -115,7 +125,8 @@ class Postnet(nn.Module):
                          kernel_size=hparams.postnet_kernel_size, stride=1,
                          padding=int((hparams.postnet_kernel_size - 1) / 2),
                          dilation=1, w_init_gain='tanh'),
-                nn.BatchNorm1d(hparams.postnet_embedding_dim))
+                nn.BatchNorm1d(hparams.postnet_embedding_dim),
+                Sine())
         )
 
         for i in range(1, hparams.postnet_n_convolutions - 1):
@@ -126,7 +137,8 @@ class Postnet(nn.Module):
                              kernel_size=hparams.postnet_kernel_size, stride=1,
                              padding=int((hparams.postnet_kernel_size - 1) / 2),
                              dilation=1, w_init_gain='tanh'),
-                    nn.BatchNorm1d(hparams.postnet_embedding_dim))
+                    nn.BatchNorm1d(hparams.postnet_embedding_dim),
+                    Sine())
             )
 
         self.convolutions.append(
@@ -140,7 +152,7 @@ class Postnet(nn.Module):
 
     def forward(self, x):
         for i in range(len(self.convolutions) - 1):
-            x = F.dropout(torch.tanh(self.convolutions[i](x)), 0.5, self.training)
+            x = F.dropout(self.convolutions[i](x), 0.5, self.training)
         x = F.dropout(self.convolutions[-1](x), 0.5, self.training)
 
         return x
@@ -378,7 +390,7 @@ class Decoder(nn.Module):
         gate_prediction = self.gate_layer(decoder_hidden_attention_context)
         return decoder_output, gate_prediction, self.attention_weights
 
-    def forward(self, memory, decoder_inputs, memory_lengths):
+    def forward_with_teacher_forcing(self, memory, decoder_inputs, memory_lengths):
         """ Decoder forward pass for training
         PARAMS
         ------
@@ -414,6 +426,46 @@ class Decoder(nn.Module):
             mel_outputs, gate_outputs, alignments)
 
         return mel_outputs, gate_outputs, alignments
+
+    def forward_without_teacher_forcing(self, memory, decoder_inputs, memory_lengths):
+        """ Decoder forward pass for training
+        PARAMS
+        ------
+        memory: Encoder outputs
+        decoder_inputs: Decoder inputs for teacher forcing. i.e. mel-specs
+        memory_lengths: Encoder output lengths for attention masking.
+
+        RETURNS
+        -------
+        mel_outputs: mel outputs from the decoder
+        gate_outputs: gate outputs from the decoder
+        alignments: sequence of attention weights from the decoder
+        """
+
+        decoder_input = self.get_go_frame(memory)
+        decoder_inputs = self.parse_decoder_inputs(decoder_inputs)
+        
+        self.initialize_decoder_states(
+            memory, mask=~get_mask_from_lengths(memory_lengths))
+
+        mel_outputs, gate_outputs, alignments = [], [], []
+        while len(mel_outputs) < decoder_inputs.size(0):
+            decoder_input = self.prenet(decoder_input)
+            mel_output, gate_output, attention_weights = self.decode(decoder_input)
+            
+            decoder_input = mel_output
+            
+            mel_outputs += [mel_output.squeeze(1)]
+            gate_outputs += [gate_output.squeeze(1)]
+            alignments += [attention_weights]
+            
+        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(
+            mel_outputs, gate_outputs, alignments)
+
+        return mel_outputs, gate_outputs, alignments
+
+    def forward(self, memory, decoder_inputs, memory_lengths):
+        return self.forward_with_teacher_forcing(memory, decoder_inputs, memory_lengths)
 
     def inference(self, memory):
         """ Decoder inference

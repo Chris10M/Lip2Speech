@@ -3,16 +3,27 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-try:
-    from .video_backbone import ShuffleNetV2
-except:
-    from video_backbone import ShuffleNetV2
 
+class TimeDistributed(nn.Module):
+    def __init__(self, module):
+        super(TimeDistributed, self).__init__()
+        self.module = module
 
-def threeD_to_2D_tensor(x):
-    n_batch, n_channels, s_time, sx, sy = x.shape
-    x = x.transpose(1, 2)
-    return x.reshape(n_batch*s_time, n_channels, sx, sy)
+    def forward(self, x):
+        B, C, T, H, W = x.size()
+
+        x = x.permute(0, 2, 1, 3, 4)
+
+        x_reshape = x.contiguous().view(-1, C, H, W) 
+    
+        y = self.module(x_reshape)
+        
+        BT, C, H, W  = y.shape
+        y = y.contiguous().view(B, T, C, H, W) 
+
+        y = y.permute(0, 2, 1, 3, 4)
+
+        return y
 
 
 class VideoExtractor(nn.Module):
@@ -34,25 +45,48 @@ class VideoExtractor(nn.Module):
                                    shufflenet.stage4,
                                    shufflenet.conv5,
                                    nn.AdaptiveAvgPool2d(1))
-        
-    def forward(self, x):
-        B, C, T, H, W = x.size()
+                                   
+        self.backend1D = nn.Sequential(
+            nn.Conv1d(1024, 1024, 5, 1, 5 // 2),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(True),
 
+            nn.Conv1d(1024, 1024, 5, 1, 5 // 2),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(True),
+        )
+
+        self.time_distributed = TimeDistributed(self.trunk)
+
+    def forward(self, x):
         x = self.frontend3D(x)
-        Tnew = x.shape[2]    # outpu should be B x C2 x Tnew x H x W
         
-        x = threeD_to_2D_tensor( x )
-        x = self.trunk(x)
-        x = x.view(-1, 1024)
-        x = x.view(B, Tnew, x.size(1))
+        x = self.time_distributed(x)
+
+        B, C, T, H, W = x.shape
+        x = x.view(B, C, T)
+
+        x = self.backend1D(x).permute(0, 2, 1)
 
         return x
 
 
 def main():
+    from torchstat import stat
+
     model = VideoExtractor(96)
-    outputs = model(torch.rand(8, 3, 75, 96, 96))
+    model.eval()
+    
+    inp = torch.rand(5, 3, 30, 96, 96)
+
+    outputs = model(inp)
+    # print(outputs[:, 0, :8])
     print(outputs.shape)
+    
+    # outputs = model(inp[:, :, :6, :, :])
+    # print(outputs[:, 0, :8])
+
+    # print(outputs.shape)
 
 
 if __name__ == '__main__':

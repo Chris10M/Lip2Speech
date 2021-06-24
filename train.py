@@ -11,7 +11,9 @@ import logging
 import time
 import datetime
 
-from datasets.avspeech.dataset import AVSpeech, av_speech_collate_fn_pad
+from datasets import train_collate_fn_pad
+from datasets.grid import GRID
+from datasets.avspeech.dataset import AVSpeech
 from train_utils.optimizer import Optimzer
 from train_utils.losses import *
 from model import model
@@ -45,12 +47,13 @@ def set_model_logger(net):
 def main():
     hparams = create_hparams()
     
-    ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
+    # ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
+    ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test')
 
     net = model.get_network('train').to(device)
     set_model_logger(net)
     
-    saved_path = 'savedmodels/31a514ea0e63bfcd93305e908b4d74e4/9000_1624362309.pth'
+    saved_path = 'savedmodels/97f5a412c085f064965de7353809922d/29000_1624522442.pth'
     
     max_iter = 64000
     save_iter = 1000
@@ -59,11 +62,11 @@ def main():
     
     dl = DataLoader(ds,
                     batch_size=n_img_per_gpu,
-                    shuffle=False,
+                    shuffle=True,
                     num_workers=n_workers,
-                    pin_memory=True,
+                    pin_memory=False,
                     drop_last=True, 
-                    collate_fn=av_speech_collate_fn_pad)
+                    collate_fn=train_collate_fn_pad)
 
 
     optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
@@ -74,6 +77,12 @@ def main():
     if os.path.isfile(saved_path):
         loaded_model = torch.load(saved_path)
         state_dict = loaded_model['state_dict']
+
+        # state_dict.pop('decoder.decoder.attention_rnn.weight_ih')
+        # state_dict.pop('decoder.decoder.attention_layer.memory_layer.linear_layer.weight')
+        # state_dict.pop('decoder.decoder.decoder_rnn.weight_ih')
+        # state_dict.pop('decoder.decoder.linear_projection.linear_layer.weight')
+        # state_dict.pop('decoder.decoder.gate_layer.linear_layer.weight')
 
         try:
             net.load_state_dict(state_dict, strict=False)
@@ -106,7 +115,7 @@ def main():
 
 
     reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
-    contrastive_criterion = MiniBatchConstrastiveLoss()
+    # contrastive_criterion = MiniBatchConstrastiveLoss()
 
 
     ## train loop
@@ -115,16 +124,15 @@ def main():
     st = glob_st = time.time()
     diter = iter(dl)
 
-    batch = next(diter)
-    
+    net.train()
     for it in range(start_it, max_iter):
-        # try:
-        #     batch = next(diter)
-        # except StopIteration:
-        #     epoch += 1
-        #     diter = iter(dl)
+        try:
+            batch = next(diter)
+        except StopIteration:
+            epoch += 1
+            diter = iter(dl)
             
-        #     batch = next(diter)
+            batch = next(diter)
 
         (videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
     
@@ -136,9 +144,9 @@ def main():
         mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
     
         r_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
-        c_loss = contrastive_criterion(constrastive_features)
+        # c_loss = contrastive_criterion(constrastive_features)
         
-        loss = r_loss + c_loss
+        loss = r_loss #+ c_loss
 
         loss.backward()
 
@@ -150,7 +158,7 @@ def main():
         optim.zero_grad()
 
         loss_avg.append(loss.item())
-        c_loss_avg.append(c_loss.item()) 
+        # c_loss_avg.append(c_loss.item()) 
         r_loss_avg.append(r_loss.item())
 
         if (it + 1) % save_iter == 0:
@@ -179,7 +187,7 @@ def main():
         if (it+1) % msg_iter == 0:
             loss_avg = sum(loss_avg) / len(loss_avg)
             r_loss_avg = sum(r_loss_avg) / len(r_loss_avg)
-            c_loss_avg = sum(c_loss_avg) / len(c_loss_avg)
+            # c_loss_avg = sum(c_loss_avg) / len(c_loss_avg)
             
             ed = time.time()
             t_intv, glob_t_intv = ed - st, ed - glob_st
@@ -197,7 +205,7 @@ def main():
                     it = it+1,
                     max_it = max_iter,
                     r_loss = r_loss_avg,
-                    c_loss = c_loss_avg,
+                    c_loss = 0,
                     loss = loss_avg,
                     time = t_intv,
                     eta = eta

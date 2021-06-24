@@ -28,7 +28,7 @@ def create_hparams():
         ################################
         # Audio Parameters             #
         ################################
-        max_wav_value=32768.0,
+        # max_wav_value=32768.0,
         sampling_rate=16000, #22050,
         filter_length=1024,
         hop_length=256,
@@ -47,7 +47,7 @@ def create_hparams():
         # encoder_kernel_size=5,
         # encoder_n_convolutions=3,
         # encoder_embedding_dim=1536,
-        encoder_embedding_dim=1536,
+        encoder_embedding_dim=1024,
 
         # Decoder parameters
         n_frames_per_step=1,  # currently only 1 is supported

@@ -22,6 +22,8 @@ class Decoder(nn.Module):
         self.decoder = TacotronDecoder(hparams)
         self.postnet = Postnet(hparams)
 
+        self.hparams = hparams
+
     def forward(self, encoder_outputs, mels, text_lengths, output_lengths):
         mel_outputs, gate_outputs, alignments = self.decoder(
             encoder_outputs, mels, memory_lengths=text_lengths)
