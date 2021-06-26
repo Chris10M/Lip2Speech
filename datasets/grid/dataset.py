@@ -1,7 +1,8 @@
 import random
-from librosa.filters import mel
+import librosa
+from numpy.lib.twodim_base import eye
 import torch
-from torch._C import dtype
+import torch.nn as nn 
 import torchvision
 import ffmpeg
 import torchaudio
@@ -17,8 +18,12 @@ from logging import Logger
 
 from torchvision.transforms.transforms import Lambda
 
-try: from .utils import LinearSpectrogram
-except: from utils import LinearSpectrogram
+try: 
+    from .utils import LinearSpectrogram
+    from .face_utils import align_and_crop_face
+except: 
+    from utils import LinearSpectrogram
+    from face_utils import align_and_crop_face 
 
 
 def av_speech_collate_fn_pad(batch):
@@ -68,7 +73,7 @@ def x_round(x):
 
 
 class GRID(Dataset):
-    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, *args, **kwargs):
+    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None ,*args, **kwargs):
         super(GRID, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
@@ -87,7 +92,12 @@ class GRID(Dataset):
             transforms.Lambda(lambda im: im.float() / 255.0),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
-        
+
+        if face_augmentation is None:
+            self.face_augmentation = nn.Identity()
+        else:
+            self.face_augmentation = face_augmentation
+
         self.mode = mode
         self.demo = demo
         
@@ -131,18 +141,18 @@ class GRID(Dataset):
         except:
             return self.get_another_item()
         
-        duration = x_round(float(video_info['duration']))
-        start_time = 0 # x_round(float(0.9 * torch.rand(1).item() * duration))
-        end_time = x_round(min(start_time + self.duration, duration))
-        duration = x_round(end_time - start_time)
+        # duration = x_round(float(video_info['duration']))
+        start_time = 0.25 #x_round(float(0.9 * torch.rand(1).item() * duration))
+        end_time = 1.25 #x_round(min(start_time + self.duration, duration))
+        duration = 1 #x_round(end_time - start_time)
         
         try:
             speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
-                                                               num_frames=int(16000 * duration), normalize=True, format='wav')
+                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                       
         except:
             # traceback.print_exc()
             return self.get_another_item()
-
+        
         assert sampling_rate == 16000
         
         if speech.shape[1] == 0:
@@ -155,14 +165,15 @@ class GRID(Dataset):
             frame_info = json.load(json_path)
 
         N = frames.shape[0]
-
+        
         faces = list()
         for idx in range(N):
+            landmarks = frame_info[str(idx)]['landmarks']
             face_coords = np.array(frame_info[str(idx)]['face_coords'], dtype=np.int)
+        
             face_coords[face_coords < 0] = 0
-            x1, y1, x2, y2 = face_coords
-
-            face = frames[idx, :, y1: y2, x1: x2]
+            
+            face = align_and_crop_face(frames[idx, :, :, :], face_coords, landmarks)
             
             if face.shape[1] < 16 or face.shape[2] < 16: return self.get_another_item()
 
@@ -170,6 +181,8 @@ class GRID(Dataset):
 
         if len(faces) == 0:
             return self.get_another_item()
+
+        faces = self.face_augmentation(faces)
 
         face_indices = (torch.rand(2) * N).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
@@ -192,10 +205,10 @@ class GRID(Dataset):
 
 def main():    
     ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', duration=1)
-    
+
     dl = DataLoader(ds,
-                    batch_size=4,
-                    shuffle=True,
+                    batch_size=8,
+                    shuffle=False,
                     num_workers=0,
                     pin_memory=False,
                     drop_last=True,
@@ -203,22 +216,26 @@ def main():
 
     from IPython.display import Audio, display
 
-    for batch in dl:
+    for bdx, batch in enumerate(dl):
         (video, video_lengths), (speeches, audio_lengths), (melspecs, melspec_lengths, mel_gates), faces = batch
-
+        
         frames = video
         print('video.shape', video.shape)
         print('faces.shape ', faces.shape)
         print('frames[0][0].shape ', frames[0][0].shape)
         # print('speech.shape ', speech.shape)
 
+
         B, C, T, H, W = video.shape
 
         for i in range(T):
             image = frames[0, :, i, :, :].permute(1, 2, 0).numpy()
+            image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+            
             print(i, image.shape)
 
-            cv2.imshow('image', image)
+
+            cv2.imshow('image', image[:, :, :: -1])
 
             if ord('q') == cv2.waitKey(0):
                 exit()

@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.core.fromnumeric import shape
 import torch
 import torchaudio
 import torchaudio.transforms as T 
@@ -17,10 +18,8 @@ class LinearSpectrogram(torch.nn.Module):
                                          win_length=hparams.win_length, 
                                          hop_length=hparams.hop_length)
 
-        self.max_wav_value = hparams.max_wav_value
-
     def forward(self, waveform):
-        return self.spectrogram(waveform / self.max_wav_value)
+        return self.spectrogram(waveform)
 
 
 class Spec2Audio(torch.nn.Module):
@@ -30,11 +29,9 @@ class Spec2Audio(torch.nn.Module):
         self.griffin_lim = T.GriffinLim(n_fft=hparams.filter_length,
                                         win_length=hparams.win_length,
                                         hop_length=hparams.hop_length)
-        
-        self.max_wav_value = hparams.max_wav_value
 
     def forward(self, spec):
-        return self.griffin_lim(spec) * self.max_wav_value
+        return self.griffin_lim(spec)
 
 
 def get_mel(stft, audio):
@@ -115,12 +112,24 @@ def main():
     audio, sampling_rate = torchaudio.load(file)
     assert hparams.sampling_rate == sampling_rate
 
-    torchaudio.save('test.wav', audio, hparams.sampling_rate)
+    m = T.MelSpectrogram(sample_rate=hparams.sampling_rate, 
+                     n_fft=hparams.filter_length, 
+                     win_length=hparams.win_length, 
+                     hop_length=hparams.hop_length,
+                     f_min=hparams.mel_fmin,
+                     f_max=hparams.mel_fmax,
+                     n_mels=hparams.n_mel_channels)
+    melspec = m(audio)
+
+    print(melspec.shape)
+    # torchaudio.save('test.wav', audio, hparams.sampling_rate)
 
     spec =  LinearSpectrogram(hparams)(audio)
+    print(spec.shape)
+    exit(0)
     reconstructed_audio = Spec2Audio(hparams)(spec)
 
-    torchaudio.save('test_recon.wav', torch.tensor(reconstructed_audio), hparams.sampling_rate)
+    # torchaudio.save('test_recon.wav', torch.tensor(reconstructed_audio), hparams.sampling_rate)
 
 
 if __name__ == "__main__":

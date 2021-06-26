@@ -43,9 +43,11 @@ def create_hparams():
         # n_symbols=len(symbols),
         # symbols_embedding_dim=512,
 
+    
         # Encoder parameters
-        # encoder_kernel_size=5,
-        # encoder_n_convolutions=3,
+        num_init_filters= 24,
+        encoder_kernel_size = 5,
+        encoder_n_convolutions=5,
         # encoder_embedding_dim=1536,
         encoder_embedding_dim=1024,
 
@@ -76,7 +78,7 @@ def create_hparams():
         ################################
         use_saved_learning_rate=False,
         learning_rate=1e-3,
-        weight_decay=1e-6,
+        weight_decay=1e-4,
         grad_clip_thresh=1.0,
         batch_size=64,
         mask_padding=True  # set model's padded outputs to padded values

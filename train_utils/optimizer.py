@@ -8,7 +8,6 @@ class Optimzer:
         # self.optim: optim.Optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
         self.optim: optim.Optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-
         self.lr = lr
 
         self.start_iter = start_iter

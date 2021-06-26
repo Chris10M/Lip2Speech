@@ -3,11 +3,13 @@ from librosa.filters import mel
 import torch
 from torch._C import dtype
 import torchvision
+import ffmpeg
 import torchaudio
 import torchvision.transforms as transforms
 import cv2
 import traceback
 import os
+import math
 import numpy as np
 import json
 from torch.utils.data import Dataset, DataLoader
@@ -15,8 +17,12 @@ from logging import Logger
 
 from torchvision.transforms.transforms import Lambda
 
-try: from .utils import LinearSpectrogram
-except: from utils import LinearSpectrogram
+try: 
+    from .utils import LinearSpectrogram
+    from .face_utils import align_and_crop_face
+except: 
+    from utils import LinearSpectrogram
+    from face_utils import align_and_crop_face 
 
 
 def av_speech_collate_fn_trim(batch):
@@ -84,8 +90,12 @@ def av_speech_collate_fn_pad(batch):
     return (padded_lower_faces, video_lengths), (padded_speeches, audio_lengths), (padded_melspecs, melspec_lengths, mel_gate_padded), face_crop_tensor
 
 
+def x_round(x):
+    return math.floor(x * 4) / 4
+
+
 class AVSpeech(Dataset):
-    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, frame_length=3, *args, **kwargs):
+    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, *args, **kwargs):
         super(AVSpeech, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
@@ -120,12 +130,14 @@ class AVSpeech(Dataset):
                     audio_path = os.path.join(root, filename.replace('.mp4', '.wav'))
                     frame_info_path = os.path.join(root, filename.replace('.mp4', '.json'))
                     
-                    if os.path.isfile(audio_path):
+                    if os.path.isfile(audio_path) and os.path.isfile(frame_info_path):
                         self.items[index] = [video_path, audio_path, frame_info_path]
                         index += 1
 
         self.len = index
-        self.frame_length = frame_length
+        self.duration = duration
+
+        print(f'Size of {type(self).__name__}: {index}')
 
     def __len__(self):
         return self.len
@@ -139,18 +151,29 @@ class AVSpeech(Dataset):
         video_pth, audio_pth, frame_info_path = item
         
         try:
-            speech, sampling_rate = torchaudio.load(audio_pth, num_frames=16000 * self.frame_length)
+            video_info = ffmpeg.probe(video_pth)['format']
+        except:
+            return self.get_another_item()
+        
+        duration = x_round(float(video_info['duration']))
+        start_time = x_round(float(0.9 * torch.rand(1).item() * duration))
+        end_time = x_round(min(start_time + self.duration, duration))
+        duration = x_round(end_time - start_time)
+        
+        try:
+            speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
+                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                                    
         except:
             # traceback.print_exc()
             return self.get_another_item()
-
+        
         assert sampling_rate == 16000
         
-        if speech.shape[0] == 0:
+        if speech.shape[1] == 0:
             return self.get_another_item()
     
-        frames, _, _ = torchvision.io.read_video(video_pth, end_pts=self.frame_length, pts_unit='sec')
-        frames = frames[:25 * self.frame_length].permute(0, 3, 1, 2)
+        frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=end_time, pts_unit='sec')
+        frames = frames[:int(25 * duration)].permute(0, 3, 1, 2)
         
         with open(frame_info_path, 'r') as json_path:
             frame_info = json.load(json_path)
@@ -159,11 +182,12 @@ class AVSpeech(Dataset):
 
         faces = list()
         for idx in range(N):
+            landmarks = frame_info[str(idx)]['landmarks']
             face_coords = np.array(frame_info[str(idx)]['face_coords'], dtype=np.int)
+        
             face_coords[face_coords < 0] = 0
-            x1, y1, x2, y2 = face_coords
-
-            face = frames[idx, :, y1: y2, x1: x2]
+            
+            face = align_and_crop_face(frames[idx, :, :, :], face_coords, landmarks)
             
             if face.shape[1] < 16 or face.shape[2] < 16: return self.get_another_item()
 
@@ -183,18 +207,20 @@ class AVSpeech(Dataset):
             lower_faces.append(self.face_resize(lower_face).unsqueeze(0))
         lower_faces = torch.cat(lower_faces, dim=0)
 
-        melspec = self.linear_spectogram(speech).squeeze(0)
+        try:
+            melspec = self.linear_spectogram(speech).squeeze(0)
+        except:
+            return self.get_another_item()
 
         return lower_faces, speech, melspec, face_crop
 
 
 def main():    
     ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
-    ds[1]
-
+    
     dl = DataLoader(ds,
-                    batch_size=8,
-                    shuffle=False,
+                    batch_size=2,
+                    shuffle=True,
                     num_workers=0,
                     pin_memory=False,
                     drop_last=True,
@@ -202,26 +228,38 @@ def main():
 
     from IPython.display import Audio, display
 
-    for frames, speech, faces in dl:
-        frames = faces
+    for batch in dl:
+        (video, video_lengths), (speeches, audio_lengths), (melspecs, melspec_lengths, mel_gates), faces = batch
+
+        frames = video
+        print('video.shape', video.shape)
         print('faces.shape ', faces.shape)
         print('frames[0][0].shape ', frames[0][0].shape)
-        print('speech.shape ', speech.shape)
+        # print('speech.shape ', speech.shape)
 
-        image = frames[0][0].permute(1, 2, 0).numpy()
+        for i in range(10):
+            image = frames[0, :, i, :, :].permute(1, 2, 0).numpy()
+            image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
 
-        sample_rate = 16000
-        effects = [
-                    ["lowpass", "-1", "700"], # apply single-pole lowpass filter
-                    # ["speed", "0.8"],  # reduce the speed
-                                        # This only changes sample rate, so it is necessary to
-                                        # add `rate` effect with original sample rate after this.
-                    # ["rate", f"{sample_rate}"],
-                    # ["reverb", "-w"],  # Reverbration gives some dramatic feeling
-        ]
+            print(image.shape)
 
-        aug_speech, sample_rate2 = torchaudio.sox_effects.apply_effects_tensor(
-        speech[0], sample_rate, effects)
+            cv2.imshow('image', image)
+
+            if ord('q') == cv2.waitKey(0):
+                exit()
+
+        # sample_rate = 16000
+        # effects = [
+        #             ["lowpass", "-1", "700"], # apply single-pole lowpass filter
+        #             # ["speed", "0.8"],  # reduce the speed
+        #                                 # This only changes sample rate, so it is necessary to
+        #                                 # add `rate` effect with original sample rate after this.
+        #             # ["rate", f"{sample_rate}"],
+        #             # ["reverb", "-w"],  # Reverbration gives some dramatic feeling
+        # ]
+
+        # aug_speech, sample_rate2 = torchaudio.sox_effects.apply_effects_tensor(
+        # speech[0], sample_rate, effects)
 
         # torchaudio.save('test.wav', speech[0], 16000)
         # torchaudio.save('aug_speech.wav', aug_speech, 16000)
@@ -236,12 +274,6 @@ def main():
         # for image, label in zip(images, lb):
         #     label = ds.vis_label(label)
 
-        cv2.imshow('image', image)
-
-        if ord('q') == cv2.waitKey(0):
-            exit()
-
-        exit()
 
     #     print(torch.unique(label))
     #     print(img.shape, label.shape)

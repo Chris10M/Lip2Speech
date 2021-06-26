@@ -7,16 +7,6 @@ from .layers import ConvNorm, LinearNorm
 from .utils import to_gpu, get_mask_from_lengths
 
 
-class Sine(nn.Module):
-    def __init__(self, w0 = 1.):
-        super().__init__()
-        
-        self.w0 = nn.Parameter(torch.tensor(w0), requires_grad=True)
-
-    def forward(self, x):
-        return torch.sin(self.w0 * x)
-
-
 class LocationLayer(nn.Module):
     def __init__(self, attention_n_filters, attention_kernel_size,
                  attention_dim):
@@ -101,12 +91,12 @@ class Prenet(nn.Module):
         super(Prenet, self).__init__()
         in_sizes = [in_dim] + sizes[:-1]
         self.layers = nn.ModuleList(
-            [nn.Sequential(LinearNorm(in_size, out_size, bias=False), Sine())
+            [LinearNorm(in_size, out_size, bias=False)
              for (in_size, out_size) in zip(in_sizes, sizes)])
 
     def forward(self, x):
         for linear in self.layers:
-            x = F.dropout(linear(x), p=0.5, training=True)
+            x = F.dropout(F.relu(linear(x)), p=0.5, training=True)
         return x
 
 
@@ -125,8 +115,7 @@ class Postnet(nn.Module):
                          kernel_size=hparams.postnet_kernel_size, stride=1,
                          padding=int((hparams.postnet_kernel_size - 1) / 2),
                          dilation=1, w_init_gain='tanh'),
-                nn.BatchNorm1d(hparams.postnet_embedding_dim),
-                Sine())
+                nn.BatchNorm1d(hparams.postnet_embedding_dim))
         )
 
         for i in range(1, hparams.postnet_n_convolutions - 1):
@@ -137,8 +126,7 @@ class Postnet(nn.Module):
                              kernel_size=hparams.postnet_kernel_size, stride=1,
                              padding=int((hparams.postnet_kernel_size - 1) / 2),
                              dilation=1, w_init_gain='tanh'),
-                    nn.BatchNorm1d(hparams.postnet_embedding_dim),
-                    Sine())
+                    nn.BatchNorm1d(hparams.postnet_embedding_dim))
             )
 
         self.convolutions.append(
@@ -152,7 +140,7 @@ class Postnet(nn.Module):
 
     def forward(self, x):
         for i in range(len(self.convolutions) - 1):
-            x = F.dropout(self.convolutions[i](x), 0.5, self.training)
+            x = F.dropout(torch.tanh(self.convolutions[i](x)), 0.5, self.training)
         x = F.dropout(self.convolutions[-1](x), 0.5, self.training)
 
         return x

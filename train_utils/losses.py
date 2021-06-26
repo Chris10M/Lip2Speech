@@ -32,15 +32,14 @@ class Tacotron2Loss(nn.Module):
         mel_out, mel_out_postnet, gate_out = model_output
         gate_out = gate_out.view(-1, 1)
         
-        mel_l2_loss = self.MSE(mel_out, mel_target) + self.MSE(mel_out_postnet, mel_target)
-        mel_l1_loss = self.L1(mel_out, mel_target) + self.L1(mel_out_postnet, mel_target)
+        mel_l1_loss = self.L1(mel_out, mel_target)
+        mel_loss = self.MSE(mel_out, mel_target) 
+        postnet_loss = self.MSE(mel_out_postnet, mel_target)
 
-        mel_loss = beta * mel_l1_loss + alpha * mel_l2_loss
-        
         gate_loss = self.BCE(gate_out, gate_target)
 
-        return mel_loss + gate_loss
-    
+        return mel_loss, postnet_loss, gate_loss, mel_l1_loss     
+
 
 class MiniBatchConstrastiveLoss(nn.Module):
     def __init__(self, t=0.07):
@@ -48,9 +47,16 @@ class MiniBatchConstrastiveLoss(nn.Module):
         
         self.t = torch.tensor(t).to(device)
         self.BCE = nn.BCEWithLogitsLoss()
-
+       
     def forward(self, constrastive_features):
-        face_pair_1, face_pair_2 = constrastive_features 
+        face_pair_1, face_pair_2, encoded_mel_gt, encoded_mel_pred = constrastive_features 
+        
+        l1_loss = self.L1(encoded_mel_gt, face_embeddings) + self.L1(encoded_mel_pred, face_embeddings)
+        
+        face_embeddings_norm = F.normalize(face_embeddings, dim=1)
+        l2_loss = self.MSE(F.normalize(encoded_mel_gt, dim=1), face_embeddings_norm) + self.MSE(F.normalize(encoded_mel_pred, dim=1), face_embeddings_norm)
+        
+        return l1_loss + 0.025 * l2_loss
         
         N, C = face_pair_1.shape
 
@@ -58,26 +64,28 @@ class MiniBatchConstrastiveLoss(nn.Module):
         face_pair_2 = F.normalize(face_pair_2, dim=1)
         
         logits = torch.matmul(face_pair_1, face_pair_2.t())
-        
-    
-        # positive_pairs, negative_pairs = list(), list()
-        # for i in range(N):
-        #     for j in range(N):
-        #         dot = torch.dot(face_pair_1[i], face_pair_2[j])
-        #         if i == j:
-        #             positive_pairs.append(dot)
-        #         else:
-        #             negative_pairs.append(dot)
-        # positive_pairs = torch.stack(positive_pairs, dim=0)
-        # negative_pairs = torch.stack(negative_pairs, dim=0)
-        # print(torch.sum(positive_pairs) - torch.sum(positive_pair))
-        # print(torch.sum(negative_pairs) - torch.sum(negative_pair))
+           
+        # # print(torch.cdist(face_pair_1, face_pair_2))
+        # # positive_pairs, negative_pairs = list(), list()
+        # # for i in range(N):
+        # #     for j in range(N):
+        # #         dot = torch.dot(face_pair_1[i], face_pair_2[j])
+        # #         if i == j:
+        # #             positive_pairs.append(dot)
+        # #         else:
+        # #             negative_pairs.append(dot)
+        # # positive_pairs = torch.stack(positive_pairs, dim=0)
+        # # negative_pairs = torch.stack(negative_pairs, dim=0)
+        # # print(positive_pairs, negative_pairs)
+        # # print(torch.sum(positive_pairs) - torch.sum(positive_pair))
+        # # # print(torch.sum(negative_pairs) - torch.sum(negative_pair))
 
 
         eye = torch.eye(N, dtype=torch.bool).to(device)
 
         positive_pair = logits[torch.where(eye)]
         negative_pair = logits[torch.where(~eye)]
+        
 
         postive_labels = torch.ones(N).to(device)
         negative_labels = torch.zeros(N * N - N).to(device)

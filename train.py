@@ -2,6 +2,7 @@ from model.modules import video
 from logger import setup_logger
 import os
 import torch
+import collections
 import torchaudio
 from torch.utils.data import DataLoader
 import hashlib
@@ -11,7 +12,7 @@ import logging
 import time
 import datetime
 
-from datasets import train_collate_fn_pad
+from datasets import train_collate_fn_pad, FaceAugmentation 
 from datasets.grid import GRID
 from datasets.avspeech.dataset import AVSpeech
 from train_utils.optimizer import Optimzer
@@ -48,14 +49,14 @@ def main():
     hparams = create_hparams()
     
     # ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
-    ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test')
+    ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
 
     net = model.get_network('train').to(device)
     set_model_logger(net)
     
-    saved_path = 'savedmodels/97f5a412c085f064965de7353809922d/29000_1624522442.pth'
+    saved_path = 'savedmodels/bc1526b26b67ef7878b2ab8c38941e0f/16000_1624683805.pth'
     
-    max_iter = 64000
+    max_iter = 6400000
     save_iter = 1000
     n_img_per_gpu = 8
     n_workers = min(n_img_per_gpu, os.cpu_count())
@@ -68,21 +69,13 @@ def main():
                     drop_last=True, 
                     collate_fn=train_collate_fn_pad)
 
-
     optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
 
     min_eval_loss = 1e5
-    epoch = 0
     start_it = 0
     if os.path.isfile(saved_path):
-        loaded_model = torch.load(saved_path)
+        loaded_model = torch.load(saved_path, map_location=device)
         state_dict = loaded_model['state_dict']
-
-        # state_dict.pop('decoder.decoder.attention_rnn.weight_ih')
-        # state_dict.pop('decoder.decoder.attention_layer.memory_layer.linear_layer.weight')
-        # state_dict.pop('decoder.decoder.decoder_rnn.weight_ih')
-        # state_dict.pop('decoder.decoder.linear_projection.linear_layer.weight')
-        # state_dict.pop('decoder.decoder.gate_layer.linear_layer.weight')
 
         try:
             net.load_state_dict(state_dict, strict=False)
@@ -94,11 +87,6 @@ def main():
             start_it = loaded_model['start_it'] + 2
         except KeyError:
             start_it = 0
-
-        try:
-            epoch = loaded_model['epoch']
-        except KeyError:
-            epoch = 0
 
         try:
             min_eval_loss = loaded_model['min_eval_loss']
@@ -115,21 +103,20 @@ def main():
 
 
     reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
-    # contrastive_criterion = MiniBatchConstrastiveLoss()
+    contrastive_criterion = MiniBatchConstrastiveLoss()
 
 
     ## train loop
     msg_iter = 50
-    loss_avg, c_loss_avg, r_loss_avg = [], [], []
+    loss_logs = collections.defaultdict(float)
     st = glob_st = time.time()
     diter = iter(dl)
 
-    net.train()
+    net = net.train()
     for it in range(start_it, max_iter):
         try:
             batch = next(diter)
         except StopIteration:
-            epoch += 1
             diter = iter(dl)
             
             batch = next(diter)
@@ -143,23 +130,29 @@ def main():
         
         mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
     
-        r_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
+        mel_loss, postnet_loss, gate_loss, mel_l1_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
+        loss_logs['mel_loss'] += mel_loss.item()
+        loss_logs['postnet_loss'] += postnet_loss.item()
+        loss_logs['gate_loss'] += gate_loss.item()
+        loss_logs['mel_l1_loss'] += mel_l1_loss.item()
+
+        r_loss = mel_loss + postnet_loss + gate_loss + mel_l1_loss
+        loss_logs['r_loss'] += r_loss.item()
+
         # c_loss = contrastive_criterion(constrastive_features)
         
         loss = r_loss #+ c_loss
 
+        net.zero_grad()
+
+
         loss.backward()
-
         grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
-
-            # optim.update_lr()
-
         optim.step()
-        optim.zero_grad()
+        
 
-        loss_avg.append(loss.item())
-        # c_loss_avg.append(c_loss.item()) 
-        r_loss_avg.append(r_loss.item())
+        loss_logs['loss'] += loss.item()
+        
 
         if (it + 1) % save_iter == 0:
                 save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
@@ -173,7 +166,6 @@ def main():
             # if eval_loss < min_eval_loss:  
                 print(f'Saving model at: {(it + 1)}, save_pth: {save_pth}')
                 torch.save({
-                    'epoch': epoch,
                     'start_it': it,
                     'state_dict': net.state_dict(),
                     'optimize_state': optim.state_dict(),
@@ -185,33 +177,23 @@ def main():
 
         #   print training log message
         if (it+1) % msg_iter == 0:
-            loss_avg = sum(loss_avg) / len(loss_avg)
-            r_loss_avg = sum(r_loss_avg) / len(r_loss_avg)
-            # c_loss_avg = sum(c_loss_avg) / len(c_loss_avg)
-            
             ed = time.time()
             t_intv, glob_t_intv = ed - st, ed - glob_st
             eta = int((max_iter - it) * (glob_t_intv / it))
             eta = str(datetime.timedelta(seconds=eta))
             msg = ', '.join([
-                    'it: {it}/{max_it}',
-                    f'epoch: {epoch}',
-                    'r_loss: {r_loss:.4f}',
-                    'c_loss: {c_loss:.4f}',
-                    'loss: {loss:.4f}',
+                    'it: {it}/{max_it}',         
+                    *[f"{k}: {round(v / msg_iter, 2)}" for k, v in loss_logs.items()],
                     'eta: {eta}',
-                    'time: {time:.4f}',
+                    'time: {time:.2f}',
                 ]).format(
                     it = it+1,
                     max_it = max_iter,
-                    r_loss = r_loss_avg,
-                    c_loss = 0,
-                    loss = loss_avg,
                     time = t_intv,
                     eta = eta
                 )
             Logger.logger.info(msg)
-            loss_avg, c_loss_avg, r_loss_avg= [], [], []
+            loss_logs = collections.defaultdict(float)
             st = ed
 
     save_pth = osp.join(Logger.ModelSavePath, 'model_final.pth')
