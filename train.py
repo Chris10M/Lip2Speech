@@ -54,7 +54,7 @@ def main():
     net = model.get_network('train').to(device)
     set_model_logger(net)
     
-    saved_path = 'savedmodels/bc1526b26b67ef7878b2ab8c38941e0f/16000_1624683805.pth'
+    saved_path = 'savedmodels/bc1526b26b67ef7878b2ab8c38941e0f/30000_1624709403.pth'
     
     max_iter = 6400000
     save_iter = 1000
@@ -65,8 +65,8 @@ def main():
                     batch_size=n_img_per_gpu,
                     shuffle=True,
                     num_workers=n_workers,
-                    pin_memory=False,
-                    drop_last=True, 
+                    pin_memory=True,
+                    drop_last=False, 
                     collate_fn=train_collate_fn_pad)
 
     optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
