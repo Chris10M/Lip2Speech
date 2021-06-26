@@ -1,3 +1,4 @@
+from .spectograms import MelSpectrogram, MelSpec2Audio
 from .augmentation import *
 import torch
 

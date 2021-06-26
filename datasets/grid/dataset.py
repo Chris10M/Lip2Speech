@@ -17,10 +17,10 @@ from logging import Logger
 from torchvision.transforms.transforms import Lambda
 
 try: 
-    from .utils import LinearSpectrogram
+    from datasets import MelSpectrogram
     from .face_utils import align_and_crop_face
 except: 
-    from utils import LinearSpectrogram
+    from datasets import MelSpectrogram
     from face_utils import align_and_crop_face 
 
 
@@ -71,13 +71,13 @@ def x_round(x):
 
 
 class GRID(Dataset):
-    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None ,*args, **kwargs):
+    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None, *args, **kwargs):
         super(GRID, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
         self.rootpth = rootpth
         
-        self.linear_spectogram = LinearSpectrogram()
+        self.linear_spectogram = MelSpectrogram()
 
         self.face_recog_resize = transforms.Compose([
             transforms.Resize((160, 160)),
@@ -118,10 +118,10 @@ class GRID(Dataset):
                         
                         index += 1
 
-        self.len = index
+        self.len = len(self.items)
         self.duration = duration
 
-        print(f'Size of {type(self).__name__}: {index}')
+        print(f'Size of {type(self).__name__}: {self.len}')
 
         random.shuffle(self.items)
         self.item_iter = iter(self.items)
@@ -170,7 +170,7 @@ class GRID(Dataset):
         overlap = 0.25
         start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
         end_time = self.current_item_attributes['end_time']
-
+        
         if start_time > end_time:
             return self.reset_item()
 
@@ -237,7 +237,7 @@ def main():
     ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', duration=1)
 
     dl = DataLoader(ds,
-                    batch_size=1,
+                    batch_size=8,
                     shuffle=False,
                     num_workers=0,
                     pin_memory=False,
@@ -258,17 +258,18 @@ def main():
 
         B, C, T, H, W = video.shape
 
-        for i in range(T):
-            image = frames[0, :, i, :, :].permute(1, 2, 0).numpy()
-            image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
-            
-            print(i, image.shape)
+        for k in range(B):
+            for i in range(T):
+                image = frames[k, :, i, :, :].permute(1, 2, 0).numpy()
+                image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+                
+                print(k, i, image.shape)
 
 
-            cv2.imshow('image', image[:, :, :: -1])
+                cv2.imshow('image', image[:, :, :: -1])
 
-            if ord('q') == cv2.waitKey(0):
-                exit()
+                if ord('q') == cv2.waitKey(0):
+                    exit()
 
         # sample_rate = 16000
         # effects = [

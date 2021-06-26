@@ -13,62 +13,6 @@ except:
     from .shufflenetv2 import ShuffleNetV2
 
 
-class TimeDistributed(nn.Module):
-    def __init__(self, module):
-        super(TimeDistributed, self).__init__()
-        self.module = module
-
-    def forward(self, x):
-        B, C, T, H, W = x.size()
-
-        x = x.permute(0, 2, 1, 3, 4)
-
-        x_reshape = x.contiguous().view(-1, C, H, W) 
-    
-        y = self.module(x_reshape)
-        
-        BT, C, H, W  = y.shape
-        y = y.contiguous().view(B, T, C, H, W) 
-
-        y = y.permute(0, 2, 1, 3, 4)
-
-        return y
-
-
-class TVideoExtractor(nn.Module):
-    def __init__( self, input_size, in_chns=3):
-
-        super(TVideoExtractor, self).__init__()        
-        shufflenet = shufflenet_v2_x1_0(pretrained=True)
-
-        frontend_nout = 24
-        self.frontend3D = nn.Sequential(
-                                        nn.Conv3d(in_chns, frontend_nout, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
-                                        nn.BatchNorm3d(frontend_nout),
-                                        nn.PReLU(num_parameters=frontend_nout),
-                                        nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-                                    )
-                
-        self.trunk = nn.Sequential(shufflenet.stage2,
-                                   shufflenet.stage3,
-                                   shufflenet.stage4,
-                                   shufflenet.conv5,
-                                   nn.AdaptiveAvgPool2d(1))
-                                   
-        self.time_distributed = TimeDistributed(self.trunk)
-
-    def forward(self, x):
-        x = self.frontend3D(x)
-        
-        x = self.time_distributed(x)
-
-        B, C, T, H, W = x.shape
-        x = x.view(B, C, T)
-
-        return x.permute(0, 2, 1)
-
-
-
 # -- auxiliary functions
 def threeD_to_2D_tensor(x):
     n_batch, n_channels, s_time, sx, sy = x.shape
@@ -130,7 +74,7 @@ class VideoExtractor(nn.Module):
         state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar')['model_state_dict']
         state_dict.pop('frontend3D.0.weight')
         self.load_state_dict(state_dict, strict=False)
-        
+
         # for p in self.parameters():
         #     p.requires_grad_(False)
         # self.frontend3D.requires_grad_(True)  

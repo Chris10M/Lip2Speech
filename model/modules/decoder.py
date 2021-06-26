@@ -14,7 +14,6 @@ class Decoder(nn.Module):
         super().__init__()
 
         hparams = create_hparams()
-        hparams.n_mel_channels = hparams.filter_length // 2 + 1 # Linear Spectogram usage
 
         self.n_mel_channels = hparams.n_mel_channels
         self.mask_padding = hparams.mask_padding
@@ -23,6 +22,15 @@ class Decoder(nn.Module):
         self.postnet = Postnet(hparams)
 
         self.hparams = hparams
+
+        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/tacotron2_statedict.pt')['state_dict']
+        state_dict.pop('decoder.attention_rnn.weight_ih')
+        state_dict.pop('decoder.attention_layer.memory_layer.linear_layer.weight')
+        state_dict.pop('decoder.decoder_rnn.weight_ih')
+        state_dict.pop('decoder.linear_projection.linear_layer.weight')
+        state_dict.pop('decoder.gate_layer.linear_layer.weight')
+        self.load_state_dict(state_dict, strict=False)
+
 
     def forward(self, encoder_outputs, mels, text_lengths, output_lengths):
         mel_outputs, gate_outputs, alignments = self.decoder(

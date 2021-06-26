@@ -50,17 +50,17 @@ def set_model_logger(net):
 def main():
 	hparams = create_hparams()
 	
-	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test')
+	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test', face_augmentation=FaceAugmentation())
 	ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/bc1526b26b67ef7878b2ab8c38941e0f/30000_1624709403.pth'
+	saved_path = 'savedmodels/89e4373408d2f274a0f21b6e4938a7e7/1000_1624725966.pth'
 	
 	max_iter = 6400000
 	save_iter = 1000
-	n_img_per_gpu = 8
+	n_img_per_gpu = 12
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
@@ -163,7 +163,7 @@ def main():
 			# Logger.logger.info(f"Model@{it + 1}\n{evaluation}"
 			# optim.reduce_lr_on_plateau(eval_loss)
 				eval_loss = loss
-				Logger.tensor_board.log_validation(eval_loss, net, (melspecs, mel_gates), outputs, it)
+				Logger.tensor_board.log_validation(eval_loss, net, (melspecs, mel_gates), outputs, it + 1)
 
 			# if eval_loss < min_eval_loss:  
 				print(f'Saving model at: {(it + 1)}, save_pth: {save_pth}')
@@ -196,8 +196,10 @@ def main():
 					time = t_intv,
 					eta = eta
 				)
-			Logger.tensor_board.log_training(loss_logs['loss'], grad_norm, hparams.learning_rate, t_intv, it)
+			Logger.tensor_board.log_training(loss_logs['loss'], grad_norm, hparams.learning_rate, t_intv, it + 1)
 			Logger.logger.info(msg)
+
+			Logger.tensor_board.log_alignment(alignments, it + 1)
 
 			loss_logs = collections.defaultdict(float)
 			st = ed
