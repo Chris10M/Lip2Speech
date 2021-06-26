@@ -1,7 +1,7 @@
 import random
 from librosa.filters import mel
 import torch
-from torch._C import dtype
+import torch.nn as nn
 import torchvision
 import ffmpeg
 import torchaudio
@@ -95,7 +95,7 @@ def x_round(x):
 
 
 class AVSpeech(Dataset):
-    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, *args, **kwargs):
+    def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None, *args, **kwargs):
         super(AVSpeech, self).__init__(*args, **kwargs)
         assert mode in ('train', 'test')
 
@@ -114,7 +114,12 @@ class AVSpeech(Dataset):
             transforms.Lambda(lambda im: im.float() / 255.0),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
-        
+
+        if face_augmentation is None:
+            self.face_augmentation = nn.Identity()
+        else:
+            self.face_augmentation = face_augmentation
+
         self.mode = mode
         self.demo = demo
         
@@ -139,41 +144,74 @@ class AVSpeech(Dataset):
 
         print(f'Size of {type(self).__name__}: {index}')
 
+        random.shuffle(self.items)
+        self.item_iter = iter(self.items)
+
+        self.current_item = None
+        self.current_item_attributes = dict()
+
     def __len__(self):
         return self.len
 
-    def get_another_item(self):
-        return self[random.choice(range(len(self)))]
+    def reset_item(self):
+        self.current_item = None
+        return self['item']
 
-    def __getitem__(self, idx):
-        item = self.items[idx]
-        
-        video_pth, audio_pth, frame_info_path = item
-        
+    def get_item(self):
+        try:
+            item_idx = next(self.item_iter)
+        except StopIteration:
+            random.shuffle(self.items)
+            self.item_iter = iter(self.items)
+            
+            item_idx = next(self.item_iter)
+
+        video_pth, audio_pth, frame_info_path = self.items[item_idx]
+
         try:
             video_info = ffmpeg.probe(video_pth)['format']
         except:
-            return self.get_another_item()
+            return self.get_item()
+
+        self.current_item = self.items[item_idx] 
+        self.current_item_attributes = {
+            'start_time': 0,
+            'end_time': x_round(float(video_info['duration']))
+        }
+        return self.current_item
         
-        duration = x_round(float(video_info['duration']))
-        start_time = x_round(float(0.9 * torch.rand(1).item() * duration))
-        end_time = x_round(min(start_time + self.duration, duration))
-        duration = x_round(end_time - start_time)
-        
+
+    def __getitem__(self, idx):
+        if self.current_item is None:
+            item = self.get_item()
+        else:
+            item = self.current_item
+
+        video_pth, audio_pth, frame_info_path = item 
+                
+        overlap = 0.25
+        start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
+        end_time = self.current_item_attributes['end_time']
+
+        if start_time > end_time:
+            return self.reset_item()
+
+        self.current_item_attributes['start_time'] += self.duration
+
         try:
             speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
-                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                                    
+                                                               num_frames=int(16000 * self.duration), normalize=True, format='wav')                                    
         except:
             # traceback.print_exc()
-            return self.get_another_item()
+            return self.reset_item()
         
         assert sampling_rate == 16000
         
         if speech.shape[1] == 0:
-            return self.get_another_item()
+            return self.reset_item()
     
         frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=end_time, pts_unit='sec')
-        frames = frames[:int(25 * duration)].permute(0, 3, 1, 2)
+        frames = frames[:int(25 * self.duration)].permute(0, 3, 1, 2)
         
         with open(frame_info_path, 'r') as json_path:
             frame_info = json.load(json_path)
@@ -189,12 +227,14 @@ class AVSpeech(Dataset):
             
             face = align_and_crop_face(frames[idx, :, :, :], face_coords, landmarks)
             
-            if face.shape[1] < 16 or face.shape[2] < 16: return self.get_another_item()
+            if face.shape[1] < 16 or face.shape[2] < 16: return self.reset_item()
 
             faces.append(face)
 
         if len(faces) == 0:
-            return self.get_another_item()
+            return self.reset_item()
+
+        faces = self.face_augmentation(faces)
 
         face_indices = (torch.rand(2) * N).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
@@ -210,7 +250,7 @@ class AVSpeech(Dataset):
         try:
             melspec = self.linear_spectogram(speech).squeeze(0)
         except:
-            return self.get_another_item()
+            return self.reset_item()
 
         return lower_faces, speech, melspec, face_crop
 
@@ -228,25 +268,31 @@ def main():
 
     from IPython.display import Audio, display
 
-    for batch in dl:
+    for bdx, batch in enumerate(dl):
         (video, video_lengths), (speeches, audio_lengths), (melspecs, melspec_lengths, mel_gates), faces = batch
-
+        
         frames = video
         print('video.shape', video.shape)
         print('faces.shape ', faces.shape)
         print('frames[0][0].shape ', frames[0][0].shape)
         # print('speech.shape ', speech.shape)
 
-        for i in range(10):
-            image = frames[0, :, i, :, :].permute(1, 2, 0).numpy()
-            image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
 
-            print(image.shape)
+        B, C, T, H, W = video.shape
 
-            cv2.imshow('image', image)
+        for k in range(B):
+            for i in range(T):
+                image = frames[k, :, i, :, :].permute(1, 2, 0).numpy()
+                image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+                
+                print(k, i, image.shape)
 
-            if ord('q') == cv2.waitKey(0):
-                exit()
+
+                cv2.imshow('image', image[:, :, :: -1])
+
+                if ord('q') == cv2.waitKey(0):
+                    exit()
+
 
         # sample_rate = 16000
         # effects = [
