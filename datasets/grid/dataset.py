@@ -1,6 +1,4 @@
 import random
-import librosa
-from numpy.lib.twodim_base import eye
 import torch
 import torch.nn as nn 
 import torchvision
@@ -125,41 +123,73 @@ class GRID(Dataset):
 
         print(f'Size of {type(self).__name__}: {index}')
 
+        random.shuffle(self.items)
+        self.item_iter = iter(self.items)
+
+        self.current_item = None
+        self.current_item_attributes = dict()
+
     def __len__(self):
         return self.len
+    
+    def reset_item(self):
+        self.current_item = None
+        return self['item']
 
-    def get_another_item(self):
-        return self[random.choice(range(len(self)))]
+    def get_item(self):
+        try:
+            item_idx = next(self.item_iter)
+        except StopIteration:
+            random.shuffle(self.items)
+            self.item_iter = iter(self.items)
+            
+            item_idx = next(self.item_iter)
 
-    def __getitem__(self, idx):
-        item = self.items[idx]
-        
-        video_pth, audio_pth, frame_info_path = item
-        
+        video_pth, audio_pth, frame_info_path = self.items[item_idx]
+
         try:
             video_info = ffmpeg.probe(video_pth)['format']
         except:
-            return self.get_another_item()
+            return self.get_item()
+
+        self.current_item = self.items[item_idx] 
+        self.current_item_attributes = {
+            'start_time': 0,
+            'end_time': x_round(float(video_info['duration']))
+        }
+        return self.current_item
         
-        # duration = x_round(float(video_info['duration']))
-        start_time = 0.25 #x_round(float(0.9 * torch.rand(1).item() * duration))
-        end_time = 1.25 #x_round(min(start_time + self.duration, duration))
-        duration = 1 #x_round(end_time - start_time)
-        
+    def __getitem__(self, _):
+        if self.current_item is None:
+            item = self.get_item()
+        else:
+            item = self.current_item
+
+        video_pth, audio_pth, frame_info_path = item 
+                
+        overlap = 0.25
+        start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
+        end_time = self.current_item_attributes['end_time']
+
+        if start_time > end_time:
+            return self.reset_item()
+
+        self.current_item_attributes['start_time'] += self.duration
+
         try:
             speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
-                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                       
+                                                               num_frames=int(16000 * self.duration), normalize=True, format='wav')                       
         except:
             # traceback.print_exc()
-            return self.get_another_item()
+            return self.reset_item()
         
         assert sampling_rate == 16000
         
         if speech.shape[1] == 0:
-            return self.get_another_item()
+            return self.reset_item()
         
         frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=end_time, pts_unit='sec')
-        frames = frames[:int(25 * duration)].permute(0, 3, 1, 2)
+        frames = frames[:int(25 * self.duration)].permute(0, 3, 1, 2)
         
         with open(frame_info_path, 'r') as json_path:
             frame_info = json.load(json_path)
@@ -175,12 +205,12 @@ class GRID(Dataset):
             
             face = align_and_crop_face(frames[idx, :, :, :], face_coords, landmarks)
             
-            if face.shape[1] < 16 or face.shape[2] < 16: return self.get_another_item()
+            if face.shape[1] < 16 or face.shape[2] < 16: return self.reset_item()
 
             faces.append(face)
 
         if len(faces) == 0:
-            return self.get_another_item()
+            return self.reset_item()
 
         faces = self.face_augmentation(faces)
 
@@ -198,7 +228,7 @@ class GRID(Dataset):
         try:
             melspec = self.linear_spectogram(speech).squeeze(0)
         except:
-            return self.get_another_item()
+            return self.reset_item()
 
         return lower_faces, speech, melspec, face_crop
 
@@ -207,7 +237,7 @@ def main():
     ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', duration=1)
 
     dl = DataLoader(ds,
-                    batch_size=8,
+                    batch_size=1,
                     shuffle=False,
                     num_workers=0,
                     pin_memory=False,
