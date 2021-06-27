@@ -1,5 +1,6 @@
 import random
 import torch
+import sys
 import torch.nn as nn 
 import torchvision
 import ffmpeg
@@ -17,10 +18,10 @@ from logging import Logger
 from torchvision.transforms.transforms import Lambda
 
 try: 
-    from datasets import MelSpectrogram
-    from .face_utils import align_and_crop_face
+    from datasets import MelSpectrogram, align_and_crop_face
 except: 
-    from datasets import MelSpectrogram
+    sys.path.extend(['..'])
+    from spectograms import MelSpectrogram
     from face_utils import align_and_crop_face 
 
 
@@ -145,6 +146,9 @@ class GRID(Dataset):
             
             item_idx = next(self.item_iter)
 
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info: item_idx = (item_idx + worker_info.id) % len(self.items)
+
         video_pth, audio_pth, frame_info_path = self.items[item_idx]
 
         try:
@@ -166,19 +170,20 @@ class GRID(Dataset):
             item = self.current_item
 
         video_pth, audio_pth, frame_info_path = item 
-                
-        overlap = 0.25
+
+        overlap = 0.2
         start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
         end_time = self.current_item_attributes['end_time']
-        
+
         if start_time > end_time:
             return self.reset_item()
 
-        self.current_item_attributes['start_time'] += self.duration
+        duration = random.choice(np.arange(0.5, self.duration + overlap, overlap))
+        self.current_item_attributes['start_time'] += duration
 
         try:
             speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
-                                                               num_frames=int(16000 * self.duration), normalize=True, format='wav')                       
+                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                                    
         except:
             # traceback.print_exc()
             return self.reset_item()
@@ -187,19 +192,24 @@ class GRID(Dataset):
         
         if speech.shape[1] == 0:
             return self.reset_item()
-        
-        frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=end_time, pts_unit='sec')
-        frames = frames[:int(25 * self.duration)].permute(0, 3, 1, 2)
+    
+        frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=start_time + duration, pts_unit='sec')
+        frames = frames.permute(0, 3, 1, 2)
+
+        N = frames.shape[0]
+
+        absoulte_start_frame_in_video = int(start_time * 25)
         
         with open(frame_info_path, 'r') as json_path:
             frame_info = json.load(json_path)
-
-        N = frames.shape[0]
         
         faces = list()
         for idx in range(N):
-            landmarks = frame_info[str(idx)]['landmarks']
-            face_coords = np.array(frame_info[str(idx)]['face_coords'], dtype=np.int)
+            absolute_frame_idx = str(absoulte_start_frame_in_video + idx)
+            if absolute_frame_idx not in frame_info: continue
+
+            landmarks = frame_info[absolute_frame_idx]['landmarks']
+            face_coords = np.array(frame_info[absolute_frame_idx]['face_coords'], dtype=np.int)
         
             face_coords[face_coords < 0] = 0
             
@@ -214,7 +224,7 @@ class GRID(Dataset):
 
         faces = self.face_augmentation(faces)
 
-        face_indices = (torch.rand(2) * N).int()
+        face_indices = (torch.rand(2) * len(faces)).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
         
         lower_faces = list()
@@ -229,7 +239,7 @@ class GRID(Dataset):
             melspec = self.linear_spectogram(speech).squeeze(0)
         except:
             return self.reset_item()
-
+        
         return lower_faces, speech, melspec, face_crop
 
 
@@ -239,7 +249,7 @@ def main():
     dl = DataLoader(ds,
                     batch_size=8,
                     shuffle=False,
-                    num_workers=0,
+                    num_workers=8,
                     pin_memory=False,
                     drop_last=True,
                     collate_fn=av_speech_collate_fn_pad)
@@ -262,11 +272,15 @@ def main():
             for i in range(T):
                 image = frames[k, :, i, :, :].permute(1, 2, 0).numpy()
                 image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
-                
+
+                face = faces[k, 0, :, :, :].permute(1, 2, 0).numpy()
+                face = ((face * 128.0) + 127.5).astype(dtype=np.uint8)
+
                 print(k, i, image.shape)
 
 
-                cv2.imshow('image', image[:, :, :: -1])
+                cv2.imshow('lip', image[:, :, :: -1])
+                cv2.imshow('face', face[:, :, :: -1])
 
                 if ord('q') == cv2.waitKey(0):
                     exit()

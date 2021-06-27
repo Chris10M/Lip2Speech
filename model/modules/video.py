@@ -13,6 +13,9 @@ except:
     from .shufflenetv2 import ShuffleNetV2
 
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 # -- auxiliary functions
 def threeD_to_2D_tensor(x):
     n_batch, n_channels, s_time, sx, sy = x.shape
@@ -71,7 +74,7 @@ class VideoExtractor(nn.Module):
  
         self._initialize_weights_randomly()
 
-        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar')['model_state_dict']
+        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
         state_dict.pop('frontend3D.0.weight')
         self.load_state_dict(state_dict, strict=False)
 

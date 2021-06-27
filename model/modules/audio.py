@@ -11,6 +11,9 @@ except:
     from .tacotron2.hparams import create_hparams
 
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 class AudioExtractor(nn.Module):
     def __init__(self, path, fine_tuning=True):
         super().__init__()
@@ -121,7 +124,7 @@ class SpeakerEncoder(nn.Module):
             nn.Linear(in_features=256, out_features=512),
         )
 
-        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder.pt')['model_state']
+        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']
         state_dict.pop('lstm.weight_ih_l0')
         
         self.load_state_dict(state_dict, strict=False)

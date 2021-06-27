@@ -453,6 +453,7 @@ class Decoder(nn.Module):
         return mel_outputs, gate_outputs, alignments
 
     def forward(self, memory, decoder_inputs, memory_lengths):
+        # return self.forward_without_teacher_forcing(memory, decoder_inputs, memory_lengths)
         return self.forward_with_teacher_forcing(memory, decoder_inputs, memory_lengths)
 
     def inference(self, memory):

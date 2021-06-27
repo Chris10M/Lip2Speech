@@ -9,32 +9,6 @@ import imutils
 import cv2
 
 
-def resize_dim(w, h, min_resolution):
-    dim = None
-
-    width, height = None, None
-    if h > w:
-        height = min_resolution
-    else:
-        width = min_resolution
-
-    # check to see if the width is None
-    if width is None:
-        # calculate the ratio of the height and construct the
-        # dimensions
-        r = height / float(h)
-        dim = (int(w * r), height)
-
-    # otherwise, the height is None
-    else:
-        # calculate the ratio of the width and construct the
-        # dimensions
-        r = width / float(w)
-        dim = (width, int(h * r))
-
-    return dim
-
-
 def align_face(frame, face_coords, landmarks):
     landmarks = np.array(landmarks)
     
@@ -60,9 +34,13 @@ def align_face(frame, face_coords, landmarks):
 
     delta_x = right_eye_x - left_eye_x
     delta_y = right_eye_y - left_eye_y
-    angle = np.arctan(delta_y/delta_x)
-    angle = (angle * 180) / np.pi
 
+    try:
+        angle = np.arctan(delta_y/delta_x)
+        angle = (angle * 180) / np.pi
+    except ZeroDivisionError:
+        angle = 0
+        
     x1, y1, x2, y2 = face_coords
     img = frame[:, y1: y2, x1: x2].permute(1, 2, 0).numpy()
 

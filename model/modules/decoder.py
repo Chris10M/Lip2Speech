@@ -9,6 +9,9 @@ except:
     from tacotron2 import Decoder as TacotronDecoder, Postnet, create_hparams, get_mask_from_lengths
 
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 class Decoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -23,7 +26,7 @@ class Decoder(nn.Module):
 
         self.hparams = hparams
 
-        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/tacotron2_statedict.pt')['state_dict']
+        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/tacotron2_statedict.pt', map_location=device)['state_dict']
         state_dict.pop('decoder.attention_rnn.weight_ih')
         state_dict.pop('decoder.attention_layer.memory_layer.linear_layer.weight')
         state_dict.pop('decoder.decoder_rnn.weight_ih')

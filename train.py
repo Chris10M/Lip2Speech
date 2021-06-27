@@ -14,6 +14,7 @@ import datetime
 from train_utils.tensorboard_logger import Tacotron2Logger
 from datasets import train_collate_fn_pad, FaceAugmentation 
 from datasets.grid import GRID
+from datasets.wild import WILD
 from datasets.avspeech.dataset import AVSpeech
 from train_utils.optimizer import Optimzer
 from train_utils.losses import *
@@ -52,22 +53,23 @@ def main():
 	
 	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test', face_augmentation=FaceAugmentation())
 	ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
+	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD', mode='test', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/89e4373408d2f274a0f21b6e4938a7e7/1000_1624725966.pth'
+	saved_path = 'savedmodels/89e4373408d2f274a0f21b6e4938a7e7/12000_1624792345.pth'
 	
 	max_iter = 6400000
 	save_iter = 1000
-	n_img_per_gpu = 12
+	n_img_per_gpu = 16
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
 					batch_size=n_img_per_gpu,
 					shuffle=True,
 					num_workers=n_workers,
-					pin_memory=True,
+					pin_memory=False,
 					drop_last=False, 
 					collate_fn=train_collate_fn_pad)
 

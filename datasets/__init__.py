@@ -1,3 +1,4 @@
+from .face_utils import align_and_crop_face
 from .spectograms import MelSpectrogram, MelSpec2Audio
 from .augmentation import *
 import torch
