@@ -78,8 +78,6 @@ class WILD(Dataset):
 
         self.rootpth = rootpth
         
-        self.linear_spectogram = MelSpectrogram()
-
         self.face_recog_resize = transforms.Compose([
             transforms.Resize((160, 160)),
             transforms.Lambda(lambda im: (im.float() - 127.5) / 128.0),
@@ -115,9 +113,10 @@ class WILD(Dataset):
                     video_path = os.path.join(root, filename)
                     audio_path = os.path.join(root, filename.replace(format, '.wav'))
                     frame_info_path = os.path.join(root, filename.replace(format, '.json'))
+                    spec_path = os.path.join(root, filename.replace(format, '..npy'))
 
-                    if os.path.isfile(audio_path) and os.path.isfile(frame_info_path):
-                        self.items[index] = [video_path, audio_path, frame_info_path]
+                    if os.path.isfile(audio_path) and os.path.isfile(frame_info_path) and os.path.isfile(spec_path):
+                        self.items[index] = [video_path, audio_path, spec_path, frame_info_path]
                         
                         index += 1
 
@@ -131,7 +130,7 @@ class WILD(Dataset):
         
         self.current_item = None
         self.current_item_attributes = dict()
-
+        
     def __len__(self):
         return self.len
     
@@ -153,7 +152,7 @@ class WILD(Dataset):
         if worker_info: item_idx = (item_idx + worker_info.id) % len(self.items)
 
 
-        video_pth, audio_pth, frame_info_path = self.items[item_idx]
+        video_pth, audio_path, spec_path, frame_info_path = self.items[item_idx]
 
         try:
             video_info = ffmpeg.probe(video_pth)['format']
@@ -173,7 +172,7 @@ class WILD(Dataset):
         else:
             item = self.current_item
         
-        video_pth, audio_pth, frame_info_path = item 
+        video_pth, audio_pth, spec_pth, frame_info_path = item 
                 
         overlap = 0.20
         start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
@@ -182,7 +181,7 @@ class WILD(Dataset):
         if start_time > end_time:
             return self.reset_item()
 
-        duration = random.choice(np.arange(0.5, self.duration + overlap, overlap))
+        duration = self.duration
         self.current_item_attributes['start_time'] += duration
         
         try:
@@ -196,6 +195,11 @@ class WILD(Dataset):
         
         if speech.shape[1] == 0:
             return self.reset_item()
+
+        melspec = torch.from_numpy(np.load(spec_pth))
+        melspec = melspec[:, :, int(63 * start_time): int(63 * (start_time + duration))] # 1sec - 63 frames
+        melspec = melspec.squeeze(0)
+
         
         frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=start_time + duration, pts_unit='sec')
         frames = frames.permute(0, 3, 1, 2)
@@ -210,7 +214,7 @@ class WILD(Dataset):
         faces = list()
         for idx in range(N):
             absolute_frame_idx = str(absoulte_start_frame_in_video + idx)
-            if absolute_frame_idx not in frame_info: continue
+            if absolute_frame_idx not in frame_info: return self.reset_item()
 
             landmarks = frame_info[absolute_frame_idx]['landmarks']
             face_coords = np.array(frame_info[absolute_frame_idx]['face_coords'], dtype=np.int)
@@ -239,16 +243,12 @@ class WILD(Dataset):
             lower_faces.append(self.face_resize(lower_face).unsqueeze(0))
         lower_faces = torch.cat(lower_faces, dim=0)
 
-        try:
-            melspec = self.linear_spectogram(speech).squeeze(0)
-        except:
-            return self.reset_item()
-        
+  
         return lower_faces, speech, melspec, face_crop
 
 
 def main():    
-    ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD', mode='test', duration=1)
+    ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL', mode='test', duration=1)
 
     dl = DataLoader(ds,
                     batch_size=8,
@@ -282,7 +282,7 @@ def main():
 
                 cv2.imshow('image', image[:, :, :: -1])
 
-                if ord('q') == cv2.waitKey(0):
+                if ord('q') == cv2.waitKey(16):
                     exit()
 
         # sample_rate = 16000
