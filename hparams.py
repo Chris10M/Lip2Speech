@@ -54,7 +54,7 @@ def create_hparams():
         n_frames_per_step=1,  # currently only 1 is supported
         decoder_rnn_dim=1024,
         prenet_dim=256,
-        max_decoder_steps=1000,
+        max_decoder_steps=80,
         gate_threshold=0.5,
         p_attention_dropout=0.1,
         p_decoder_dropout=0.1,
@@ -77,10 +77,12 @@ def create_hparams():
         ################################
         use_saved_learning_rate=False,
         learning_rate=1e-3,
-        weight_decay=1e-4,
+        weight_decay=1e-6,
         grad_clip_thresh=5.0,
         batch_size=64,
-        mask_padding=True  # set model's padded outputs to padded values
+        mask_padding=True,  # set model's padded outputs to padded values
+
+        teacher_forcing_probability=0.7,
     )
     
     class HParams:

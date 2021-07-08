@@ -19,6 +19,7 @@ from tensorboard_logger import TFBoard
 from losses import *
 from dataset import AVSpeechFace, av_speech_face_collate_fn
 from model import get_network
+from model import *
 # from evaluate import evaluate_net
 
 
@@ -52,13 +53,15 @@ def set_model_logger(net):
 def main():	
 	ds = AVSpeechFace('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='train')
 
+	face_decoder = FaceDecoder()
+	face_decoder = face_decoder.train().to(device)
 	net, speech_encoder = get_network()
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/156bcbfe7c66281240affb1d053dd279/333000_1625226579.pth'
+	saved_path = 'savedmodels/156bcbfe7c66281240affb1d053dd279/438000_1625379312.pth'
 	
-	max_iter = 6400000
-	save_iter = 3000
+	max_iter = 720000
+	save_iter = 1000
 	n_img_per_gpu = 64
 	n_workers = 16# min(n_img_per_gpu, os.cpu_count())
  
@@ -69,12 +72,15 @@ def main():
 					pin_memory=True,
 					drop_last=False, 
 					collate_fn=av_speech_face_collate_fn, 
-					persistent_workers=True)
+					persistent_workers=True,
+					prefetch_factor=4)
 
 	contrastive_criterion = MiniBatchConstrastiveLoss()
+	reconstuction_criterion = ReconstuctionLoss()
 
-	optim = Optimzer.Adam(net.parameters(), weight_decay=1e-5, lr=1e-3)
+	optim = Optimzer.SGD(net.parameters(), weight_decay=1e-5, lr=1e-3, momentum=0.9)
 	t_optim = Optimzer.Adam([contrastive_criterion.t])
+	f_optim = Optimzer.Adam(face_decoder.parameters())
 	
 	min_eval_loss = 1e5
 	start_it = 0
@@ -103,9 +109,15 @@ def main():
 			t_optim.load_state_dict(loaded_model['t']['optim'])
 			contrastive_criterion.t = loaded_model['t']['value']
 
-		print(f'Model Loaded: {saved_path} @ start_it: {start_it}')
+		if 'face_decoder' in loaded_model:
+			f_optim.load_state_dict(loaded_model['face_decoder']['optim'])
+			face_decoder.load_state_dict(loaded_model['face_decoder']['state_dict'])
 
-	
+		print(f'Model Loaded: {saved_path} @ start_it: {start_it} t: {contrastive_criterion.t}')
+
+	for group in optim.param_groups: group['initial_lr'] = 1e-3
+	scheduler = Optimzer.lr_scheduler.CosineAnnealingLR(optim, (max_iter * n_img_per_gpu) // len(ds), last_epoch=(start_it * n_img_per_gpu)// len(ds), verbose=True)
+
 	## train loop
 	msg_iter = 50
 	loss_logs = collections.defaultdict(float)
@@ -120,6 +132,7 @@ def main():
 		except StopIteration:
 			diter = iter(dl)
 			epoch += 1
+			scheduler.step()
 			
 			batch = next(diter)
 
@@ -131,11 +144,18 @@ def main():
 				speech_embeddings = speech_encoder(speeches)
 
 			face_embeddings = net(faces)
+
+			if torch.rand(1) > 0.5: 
+				reconstucted_faces = face_decoder(face_embeddings.detach())
+			else:
+				reconstucted_faces = face_decoder(speech_embeddings)
 		except: 
 			traceback.print_exc()
 			continue
 		
-		losses = contrastive_criterion([speech_embeddings, face_embeddings])
+		losses = dict()
+		losses = contrastive_criterion([speech_embeddings, face_embeddings], losses)
+		losses = reconstuction_criterion(reconstucted_faces, faces, losses)
 
 		loss = list()
 		for k, v in losses.items():
@@ -146,14 +166,15 @@ def main():
 
 		optim.zero_grad()
 		t_optim.zero_grad()
+		f_optim.zero_grad()
 		
 		loss.backward()
-		grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), 5)
+		grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), 10)
 		
 		optim.step()
 		t_optim.step()
-		
-
+		f_optim.step()
+	
 		loss_logs['loss'] += loss.item()
 		
 
@@ -173,7 +194,8 @@ def main():
 					'state_dict': net.state_dict(),
 					'optimize_state': optim.state_dict(),
 					'min_eval_loss': min_eval_loss,
-					't': {'value': contrastive_criterion.t, 'optim': t_optim.state_dict()}
+					't': {'value': contrastive_criterion.t, 'optim': t_optim.state_dict()},
+					'face_decoder': {'state_dict': face_decoder.state_dict(),  'optim': f_optim.state_dict()},
 				}, save_pth)
 				print(f'model at: {(it + 1)} Saved')
 

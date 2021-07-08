@@ -3,6 +3,8 @@ from numpy.core.defchararray import count
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.modules import loss
+import torchvision
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -48,53 +50,72 @@ class MiniBatchConstrastiveLoss(nn.Module):
         speech_embeddings, face_embeddings = constrastive_features 
         N = face_embeddings.shape[0]
 
-        # losses['l2_loss'] = self.MSE(F.normalize(F.relu(face_embeddings), dim=1),  F.normalize(F.relu(speech_embeddings), dim=1))
+        losses['l2_loss'] = self.MSE(F.normalize(F.relu(face_embeddings), dim=1),  F.normalize(F.relu(speech_embeddings), dim=1))
         # losses['gram_loss'] = style_criterion(face_embeddings, speech_embeddings)
         
         logits = face_embeddings @ speech_embeddings.T * self.t
-        # if self.count % 1000 == 0:
-        #     print(logits)
-        #     print(torch.argmax(F.softmax(logits, dim=-1), dim=0), torch.argmax(F.softmax(logits, dim=-1), dim=1))
 
-        # self.count += 1
-        # # print(torch.cdist(face_pair_1, face_pair_2))
-        # # positive_pairs, negative_pairs = list(), list()
-        # # for i in range(N):
-        # #     for j in range(N):
-        # #         dot = torch.dot(face_pair_1[i], face_pair_2[j])
-        # #         if i == j:
-        # #             positive_pairs.append(dot)
-        # #         else:
-        # #             negative_pairs.append(dot)
-        # # positive_pairs = torch.stack(positive_pairs, dim=0)
-        # # negative_pairs = torch.stack(negative_pairs, dim=0)
-        # # print(positive_pairs, negative_pairs)
-        # # print(torch.sum(positive_pairs) - torch.sum(positive_pair))
-        # # # print(torch.sum(negative_pairs) - torch.sum(negative_pair))
-
-        # face_similarity = face_embeddings @ face_embeddings.T
-        # speech_similarity = speech_embeddings @ speech_embeddings.T
+        targets = torch.arange(0, N).to(device)
+        weight = (torch.ones(N).float() * (N - 1)).to(device)
         
-        # targets = F.softmax((face_similarity + speech_similarity) / 2, dim=-1)
-        targets = torch.arange(0, N).to(device)#F.softmax(speech_similarity, dim=-1)
-        
-        c_loss = (F.cross_entropy(logits, targets) + F.cross_entropy(logits.T, targets.T)) / 2
+        c_loss = (F.cross_entropy(logits, targets, weight=weight) + F.cross_entropy(logits.T, targets.T, weight=weight)) / 2
         losses['c_loss'] = c_loss
-        # c_loss = (c_loss / 2).mean()
 
-        # eye = torch.eye(N, dtype=torch.bool).to(device)
 
-        # positive_pair = logits[torch.where(eye)]
-        # negative_pair = logits[torch.where(~eye)]
-                
-        # postive_labels = torch.ones(N).to(device)
-        # negative_labels = torch.zeros(N * (N - 1)).to(device)
+        return losses
 
-        # loss_pos = F.binary_cross_entropy_with_logits(positive_pair, postive_labels, torch.ones(N).to(device) * (N - 1))  # self.BCE(positive_pair, postive_labels)
-        # loss_neg = F.binary_cross_entropy_with_logits(negative_pair, negative_labels)
 
-        # c_loss = loss_pos + loss_neg
+class VGGPerceptualLoss(torch.nn.Module):
+    def __init__(self, resize=True):
+        super(VGGPerceptualLoss, self).__init__()
+        blocks = []
+        blocks.append(torchvision.models.vgg16(pretrained=True).features[:4].eval())
+        blocks.append(torchvision.models.vgg16(pretrained=True).features[4:9].eval())
+        blocks.append(torchvision.models.vgg16(pretrained=True).features[9:16].eval())
+        blocks.append(torchvision.models.vgg16(pretrained=True).features[16:23].eval())
+        for bl in blocks:
+            for p in bl.parameters():
+                p.requires_grad = False
+            
+        self.blocks = torch.nn.ModuleList(blocks)
+        self.transform = torch.nn.functional.interpolate
+        self.mean = torch.nn.Parameter(torch.tensor([0.485, 0.456, 0.406], device='cuda').view(1,3,1,1))
+        self.std = torch.nn.Parameter(torch.tensor([0.229, 0.224, 0.225], device='cuda').view(1,3,1,1))
+        self.resize = resize
 
+    def forward(self, input, target):
+        if input.shape[1] != 3:
+            input = input.repeat(1, 3, 1, 1)
+            target = target.repeat(1, 3, 1, 1)
+        input = (input-self.mean) / self.std
+        target = (target-self.mean) / self.std
+        if self.resize:
+            input = self.transform(input, mode='bilinear', size=(224, 224), align_corners=False)
+            target = self.transform(target, mode='bilinear', size=(224, 224), align_corners=False)
+        loss = 0.0
+        x = input
+        y = target
+        for block in self.blocks:
+            x = block(x)
+            y = block(y)
+            loss += torch.nn.functional.l1_loss(x, y)
+        return loss
+
+
+class ReconstuctionLoss(nn.Module):
+    def __init__(self):
+        super(ReconstuctionLoss, self).__init__()
+        
+        self.MSE = nn.MSELoss()
+        # self.perceptual_loss = VGGPerceptualLoss()
+       
+    def forward(self, y_pred, y_gt, losses=None):
+        if losses is None:
+            losses = dict()
+
+        losses['rec_loss'] = 10 * F.mse_loss(y_pred, y_gt)
+
+        # self.perceptual_loss(((y_pred * 128.0) + 127.5), ((y_gt * 128.0) + 127.5))
 
         return losses
 

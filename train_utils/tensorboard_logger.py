@@ -1,4 +1,5 @@
 import random
+import cv2
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from .plotting_utils import plot_alignment_to_numpy, plot_spectrogram_to_numpy
@@ -46,6 +47,9 @@ class Tacotron2Logger(SummaryWriter):
                 gate_targets[idx].data.cpu().numpy(),
                 torch.sigmoid(gate_outputs[idx]).data.cpu().numpy()),
             iteration, dataformats='HWC')
+        
+        cv2.imwrite('mel_target.png', plot_spectrogram_to_numpy(mel_targets[idx].data.cpu().numpy()))
+        cv2.imwrite('mel_predicted.png', plot_spectrogram_to_numpy(mel_outputs[idx].data.cpu().numpy()))
 
     def log_alignment(self, alignments, iteration):
         idx = random.randint(0, alignments.size(0) - 1)
@@ -54,3 +58,4 @@ class Tacotron2Logger(SummaryWriter):
             plot_alignment_to_numpy(alignments[idx].data.cpu().numpy().T),
             iteration, dataformats='HWC')
         
+        cv2.imwrite('alignment.png', plot_alignment_to_numpy(alignments[idx].data.cpu().numpy().T))

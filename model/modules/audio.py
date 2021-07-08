@@ -1,14 +1,16 @@
 import torch
+import torchaudio.transforms as AT
 import torch.nn.functional as F
 from torch import nn
+import numpy as np
 import fairseq
-from torch.nn.modules.activation import ReLU
-from torch.nn.modules.container import T
+
 
 try:
-    from tacotron2.hparams import create_hparams
+    from hparams import create_hparams
 except:
-    from .tacotron2.hparams import create_hparams
+    import sys; sys.path.append('../..')
+    from hparams import create_hparams
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -109,44 +111,56 @@ class SpeakerEncoder(nn.Module):
     def __init__(self):
         super().__init__()
         
-        hparams  = create_hparams()
-        in_chns = hparams.filter_length // 2 + 1
-
-        self.lstm = nn.LSTM(input_size=in_chns,
+        self.lstm = nn.LSTM(input_size=40,
                             hidden_size=256, 
                             num_layers=3, 
                             batch_first=True)
 
         self.linear = nn.Linear(in_features=256, out_features=256)
         
-        self.projection = nn.Sequential(
-            nn.ReLU(True),
-            nn.Linear(in_features=256, out_features=512),
-        )
-
-        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']
-        state_dict.pop('lstm.weight_ih_l0')
-        
+        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']        
         self.load_state_dict(state_dict, strict=False)
-        for name, p in self.named_parameters():
-            if 'projection' in name: continue
-            if 'l0' in name: continue 
 
+        for name, p in self.named_parameters():
             p.requires_grad_(False)
 
+        self.mel_spec = AT.MelSpectrogram(sample_rate=16000, n_fft=400, hop_length=160, n_mels=40)
+
+
     def forward(self, utterances, hidden_init=None):
+        utterances = self.mel_spec(utterances).permute(0, 2, 1)
+        
         out, (hidden, cell) = self.lstm(utterances, hidden_init)
         
-        embeds_raw = self.linear(hidden[-1])
-        embeds_raw = self.projection(embeds_raw)
+        # embeds_raw = F.relu(self.linear(hidden[-1]))
+        embeds_raw = (self.linear(hidden[-1]))
 
-        embeds = F.normalize(embeds_raw, dim=1, p=2)
+        # embeds = embeds_raw / (torch.norm(embeds_raw, dim=1, keepdim=True) + 1e-5)        
 
-        return embeds
-
+        return embeds_raw
+        
+    def inference(self, x):
+        if self.training:
+            self = self.eval()
+        
+        with torch.no_grad():
+            embeds_raw = F.relu(self(x))
+            return F.normalize(embeds_raw, p=2, dim=1)
 
 
 def main():
+    import torchaudio
+
+    mel_window_length = 25  # In milliseconds
+    mel_window_step = 10    # In milliseconds
+    mel_n_channels = 40
+    ## Audio
+    sampling_rate = 16000
+    
+    n_fft = int(sampling_rate * mel_window_length / 1000)
+    hop_length = int(sampling_rate * mel_window_step / 1000)
+    n_mels = mel_n_channels
+    print(n_fft, hop_length, n_mels)
     # torch.Size([1, 513, 1000])
 
     # model = AudioExtractor('/media/ssd/christen-rnd/Experiments/Lip2Speech/wav2vec_large.pt')
@@ -155,11 +169,17 @@ def main():
 
     # outputs = model.identity_features(speech)
     # print(outputs.shape)
-
+    
     model = SpeakerEncoder()
-    outs = model(torch.rand(2, 1000, 513))
 
+    file = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4/20.0.wav'
+    audio, sampling_rate = torchaudio.load(file)
+    
+    outs = model(audio)
     print(outs.shape)
+    speaker = outs.cpu().numpy()
+    np.save('speaker.npz', speaker)
+    # print(torch.sum(outs.view(-1)))
 
 
 if __name__ == '__main__':

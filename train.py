@@ -1,4 +1,8 @@
 import torch
+from apex import amp
+from torch import optim as Optimizer
+import numpy as np
+from torch.nn import parameter
 torch.manual_seed(1)
 from logger import setup_logger
 import os
@@ -6,6 +10,7 @@ import collections
 from torch.utils.data import DataLoader
 import hashlib
 import os
+import math
 import os.path as osp
 import logging
 import time
@@ -15,11 +20,11 @@ from train_utils.tensorboard_logger import Tacotron2Logger
 from datasets import train_collate_fn_pad, FaceAugmentation 
 from datasets.grid import GRID
 from datasets.wild import WILD
+from datasets.lrw import LRW
 from datasets.avspeech.dataset import AVSpeech
-from train_utils.optimizer import Optimzer
 from train_utils.losses import *
 from model import model
-from model.modules.tacotron2.hparams import create_hparams
+from hparams import create_hparams
 # from evaluate import evaluate_net
 
 
@@ -45,35 +50,47 @@ def set_model_logger(net):
 		logger.info(model_info)
 
 	Logger.logger = logger
-	Logger.tensor_board = Tacotron2Logger(respth)
+
+	tf_logs = f'{respth}/tf-logs'; os.makedirs(tf_logs, exist_ok=True)
+	Logger.tensor_board = Tacotron2Logger(tf_logs)
 
 
 def main():
 	hparams = create_hparams()
 	
 	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test', face_augmentation=FaceAugmentation())
-	ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
-	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD', mode='test', face_augmentation=FaceAugmentation())
+	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
+	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', 
+	# 		  mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
+	ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', face_augmentation=FaceAugmentation())
+
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/89e4373408d2f274a0f21b6e4938a7e7/12000_1624792345.pth'
+	saved_path = 'savedmodels/2b84dc9ae8b402414700fedf46d8f25e/121000_1625711705.pth'
 	
 	max_iter = 6400000
 	save_iter = 1000
-	n_img_per_gpu = 16
+	n_img_per_gpu = 36
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
 					batch_size=n_img_per_gpu,
 					shuffle=True,
 					num_workers=n_workers,
-					pin_memory=False,
+					pin_memory=True,
 					drop_last=False, 
 					collate_fn=train_collate_fn_pad)
 
-	optim = Optimzer(net, 0, max_iter, weight_decay=hparams.weight_decay, lr=hparams.learning_rate)
+	optim = Optimizer.AdamW([{'params': net.decoder.parameters()},
+							 {'params': net.v_encoder.parameters()},
+							 {'params': net.linear_projection.parameters()}
+							], lr=hparams.learning_rate, weight_decay=hparams.weight_decay, amsgrad=True)
+
+	if hparams.fp16_run:
+		net.decoder.decoder.attention_layer.score_mask_value = np.finfo('float16').min
+		net, optim = amp.initialize(net, optim, opt_level='O2')
 
 	min_eval_loss = 1e5
 	start_it = 0
@@ -97,7 +114,6 @@ def main():
 		except KeyError: ...
 
 		try:
-			optim = Optimzer(net, start_it, max_iter)
 			optim.load_state_dict(loaded_model['optimize_state'])
 			...
 		except Exception as e: print(e)
@@ -107,24 +123,24 @@ def main():
 
 
 	reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
-	contrastive_criterion = MiniBatchConstrastiveLoss()
-
-
+	# contrastive_criterion = MiniBatchConstrastiveLoss()
+	
 	## train loop
 	msg_iter = 50
 	loss_logs = collections.defaultdict(float)
 	st = glob_st = time.time()
 	diter = iter(dl)
+	epoch = 0
 
 	net = net.train()
 	for it in range(start_it, max_iter):
 		try:
 			batch = next(diter)
 		except StopIteration:
+			epoch += 1
 			diter = iter(dl)
-			
 			batch = next(diter)
-
+		
 		(videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
 	
 		videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
@@ -147,16 +163,27 @@ def main():
 		
 		loss = r_loss #+ c_loss
 
-		net.zero_grad()
+		optim.zero_grad()
 
+		if hparams.fp16_run:
+			with amp.scale_loss(loss, optim) as scaled_loss:
+				scaled_loss.backward()
+		else:
+			loss.backward()
 
-		loss.backward()
-		grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
+		if hparams.fp16_run:
+			grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optim), hparams.grad_clip_thresh)
+			is_overflow = math.isnan(grad_norm)
+		else:
+			is_overflow = False
+			grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
+		
 		optim.step()
 		
-
 		loss_logs['loss'] += loss.item()
 		
+
+		if is_overflow: continue
 
 		if (it + 1) % save_iter == 0:
 				save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
@@ -188,6 +215,7 @@ def main():
 			eta = int((max_iter - it) * (glob_t_intv / it))
 			eta = str(datetime.timedelta(seconds=eta))
 			msg = ', '.join([
+					f'epoch: {epoch}',
 					'it: {it}/{max_it}',         
 					*[f"{k}: {v}" for k, v in loss_logs.items()],
 					'eta: {eta}',

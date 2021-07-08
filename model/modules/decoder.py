@@ -4,9 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from .tacotron2 import Decoder as TacotronDecoder, Postnet, create_hparams, get_mask_from_lengths
+    from hparams import create_hparams
+    from .tacotron2 import Decoder as TacotronDecoder, Postnet, get_mask_from_lengths
 except:
-    from tacotron2 import Decoder as TacotronDecoder, Postnet, create_hparams, get_mask_from_lengths
+    from tacotron2 import Decoder as TacotronDecoder, Postnet, get_mask_from_lengths
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

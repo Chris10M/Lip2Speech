@@ -214,6 +214,7 @@ class Decoder(nn.Module):
         self.gate_threshold = hparams.gate_threshold
         self.p_attention_dropout = hparams.p_attention_dropout
         self.p_decoder_dropout = hparams.p_decoder_dropout
+        self.teacher_forcing_probability = hparams.teacher_forcing_probability
 
         self.prenet = Prenet(
             hparams.n_mel_channels * hparams.n_frames_per_step,
@@ -415,6 +416,54 @@ class Decoder(nn.Module):
 
         return mel_outputs, gate_outputs, alignments
 
+    def forward_with_probably_teacher_forcing(self, memory, decoder_inputs, memory_lengths, probability=0.5):
+        """ Decoder forward pass for training
+        PARAMS
+        ------
+        memory: Encoder outputs
+        decoder_inputs: Decoder inputs for teacher forcing. i.e. mel-specs
+        memory_lengths: Encoder output lengths for attention masking.
+
+        RETURNS
+        -------
+        mel_outputs: mel outputs from the decoder
+        gate_outputs: gate outputs from the decoder
+        alignments: sequence of attention weights from the decoder
+        """
+
+        decoder_input = self.get_go_frame(memory).unsqueeze(0)
+        decoder_inputs = self.parse_decoder_inputs(decoder_inputs)
+        decoder_inputs = torch.cat((decoder_input, decoder_inputs), dim=0)
+        decoder_inputs = self.prenet(decoder_inputs)
+
+        decoder_input = decoder_input.squeeze(0)
+
+        self.initialize_decoder_states(
+            memory, mask=~get_mask_from_lengths(memory_lengths))
+        
+        take_from_teacher = ~(torch.rand(decoder_inputs.size(0)) > probability)
+        
+        mel_outputs, gate_outputs, alignments = [], [], []
+        while len(mel_outputs) < decoder_inputs.size(0) - 1:
+
+            if take_from_teacher[len(mel_outputs)]:
+                decoder_input = decoder_inputs[len(mel_outputs)]
+            else:
+                decoder_input = self.prenet(decoder_input)
+ 
+            mel_output, gate_output, attention_weights = self.decode(decoder_input)
+
+            decoder_input = mel_output
+
+            mel_outputs += [mel_output.squeeze(1)]
+            gate_outputs += [gate_output.squeeze(1)]
+            alignments += [attention_weights]
+
+        mel_outputs, gate_outputs, alignments = self.parse_decoder_outputs(
+            mel_outputs, gate_outputs, alignments)
+
+        return mel_outputs, gate_outputs, alignments
+
     def forward_without_teacher_forcing(self, memory, decoder_inputs, memory_lengths):
         """ Decoder forward pass for training
         PARAMS
@@ -454,7 +503,8 @@ class Decoder(nn.Module):
 
     def forward(self, memory, decoder_inputs, memory_lengths):
         # return self.forward_without_teacher_forcing(memory, decoder_inputs, memory_lengths)
-        return self.forward_with_teacher_forcing(memory, decoder_inputs, memory_lengths)
+        # return self.forward_with_teacher_forcing(memory, decoder_inputs, memory_lengths)
+        return self.forward_with_probably_teacher_forcing(memory, decoder_inputs, memory_lengths, probability=self.teacher_forcing_probability)
 
     def inference(self, memory):
         """ Decoder inference

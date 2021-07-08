@@ -5,11 +5,39 @@ import torchaudio
 import torchaudio.transforms as T 
 import sys; 
 try:
-    sys.path.extend(['../../model/modules/tacotron2', '../model/modules/tacotron2'])
+    sys.path.extend(['../..', '..'])
     from hparams import create_hparams
 except:
-    from model.modules.tacotron2.hparams import create_hparams
+    from hparams import create_hparams
 
+
+
+def dynamic_range_compression(x, C=1, clip_val=1e-5):
+    """
+    PARAMS
+    ------
+    C: compression factor
+    """
+    return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def dynamic_range_decompression(x, C=1):
+    """
+    PARAMS
+    ------
+    C: compression factor used to compress
+    """
+    return torch.exp(x) / C
+
+
+def spectral_normalize(magnitudes):
+    output = dynamic_range_compression(magnitudes)
+    return output
+
+def spectral_de_normalize(magnitudes):
+    output = dynamic_range_decompression(magnitudes)
+    return output
+    
 
 class MelSpectrogram(torch.nn.Module):
     def __init__(self, hparams=create_hparams()):        
@@ -27,7 +55,10 @@ class MelSpectrogram(torch.nn.Module):
 
 
     def forward(self, waveform):
-        return self.mel_spec(waveform)
+        melspec = self.mel_spec(waveform)
+        melspec = spectral_normalize(melspec)
+
+        return melspec
 
 
 class Spec2Audio(torch.nn.Module):
@@ -59,14 +90,19 @@ class MelSpec2Audio(torch.nn.Module):
                                         n_iter=max_iters)
 
     def forward(self, melspec):
+        melspec = spectral_de_normalize(melspec)
+
         return self.griffin_lim(self.inv_mel_spec(melspec))
+
 
 
 def main():
     import sys; sys.path.append('../../model/modules/tacotron2')
     from hparams import create_hparams
-    from layers import TacotronSTFT
-    from stft import STFT
+    # from layers import TacotronSTFT
+    # from stft import STFT
+    
+
 
     hparams = create_hparams()
 
@@ -110,8 +146,8 @@ def main():
     reconstructed_audio = MelSpec2Audio(hparams)(spec)
     torchaudio.save('test_ms_recon.wav', torch.tensor(reconstructed_audio), hparams.sampling_rate)
 
-    reconstructed_audio = Spec2Audio(hparams)(inverse_mel_pred)
-    torchaudio.save('test_oms_recon.wav', torch.tensor(reconstructed_audio), hparams.sampling_rate)
+    # reconstructed_audio = Spec2Audio(hparams)(inverse_mel_pred)
+    # torchaudio.save('test_oms_recon.wav', torch.tensor(reconstructed_audio), hparams.sampling_rate)
 
 
 if __name__ == "__main__":

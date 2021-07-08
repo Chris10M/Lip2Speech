@@ -1,3 +1,4 @@
+from numpy.core.defchararray import decode
 import torch
 import torchaudio.transforms as AT
 import torch.nn.functional as F
@@ -95,6 +96,92 @@ class SpeakerEncoder(nn.Module):
 
 
 
+class SpeakerDecoder(nn.Module):        
+    def __init__(self):
+        super().__init__()
+
+        self.seq_len = 201
+        self.lstm = nn.LSTM(input_size=256,
+                            hidden_size=256, 
+                            num_layers=3, 
+                            batch_first=True)
+        self.linear = nn.Linear(256, 40)
+
+    def forward(self, x):
+        x = x.unsqueeze(1).repeat(1, self.seq_len, 1)
+        x, (hidden_state, cell_state)  = self.lstm(x)
+    
+        x = self.linear(x)
+                
+        return x
+
+
+
+class ConvBlock(nn.Module):
+    def conv3x3(self, in_chns, out_chns, exp_r=6):
+        return nn.Sequential(
+            nn.Conv2d(in_chns, in_chns * exp_r, 1),
+            nn.BatchNorm2d(in_chns * exp_r),
+            nn.ReLU(True),
+
+            nn.Conv2d(in_chns * exp_r, out_chns, 3, groups=out_chns, padding=3 // 2),
+            nn.BatchNorm2d(out_chns),
+            nn.ReLU(True),
+        )
+
+    def __init__(self, in_chns, out_chns):
+        super().__init__()
+        self.conv = self.conv3x3(in_chns, out_chns)
+        self.upsample = nn.Conv2d(in_chns, out_chns, 1) 
+
+    def forward(self, x):
+        residual = x
+        return self.conv(x) + self.upsample(residual) 
+
+
+class FaceDecoder(nn.Module):        
+        
+    def upsample(self, chns, scale):
+        return nn.Sequential(
+            nn.UpsamplingBilinear2d(scale_factor=scale),
+            nn.Conv2d(chns, chns, 3, padding=3 // 2)
+        )
+
+    def __init__(self):
+        super().__init__()
+
+        self.res = 5
+        self.lsize = 512
+        self.linear = nn.Linear(256, self.res * self.res * self.lsize)
+        self.feature_extractor = nn.Sequential(
+            ConvBlock(512, 256),
+            self.upsample(256, 2),
+
+            ConvBlock(256, 128),
+            self.upsample(128, 2),
+
+            ConvBlock(128, 64),
+            self.upsample(64, 2),
+
+            ConvBlock(64, 64),
+            self.upsample(64, 2),
+
+            nn.Conv2d(64, 3, 1)
+        )
+
+    def forward(self, x):    
+        x = self.linear(x)
+
+        x = F.dropout(x, 0.3, self.training)
+        x = x.view(-1, self.lsize, self.res, self.res)
+
+        x = self.feature_extractor(x)
+
+        x = F.interpolate(x, (160, 160), mode='bilinear', align_corners=True)
+
+        return x
+
+
 def get_network():
     fnet = FaceRecognizer().to(device)
     fnet = fnet.train()
@@ -126,18 +213,30 @@ def main():
 
     # outputs = model.identity_features(speech)
     # print(outputs.shape)
-    
+        
     model = SpeakerEncoder('cpu')
 
     file = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4/20.0.wav'
     audio, sampling_rate = torchaudio.load(file)
-    print(audio.shape)
+    audio = audio[:, :16000]
+    melspec = AT.MelSpectrogram(sample_rate=16000, n_fft=400, hop_length=160, n_mels=40).to(device)
+    utterances = melspec(audio).permute(0, 2, 1)
+    print(audio.shape, utterances.shape)
+
     outs = model(audio)
     print(outs.shape)
     speaker = outs.cpu().numpy()
-    np.save('speaker.npz', speaker)
+    # np.save('speaker.npz', speaker)
     # print(torch.sum(outs.view(-1)))
+    
+    decoder = SpeakerDecoder()
+    decode = decoder(torch.rand(2, 256))
+    print('speakerdecode', decode.shape)
 
+    decoder = FaceDecoder()
+    decode = decoder(torch.rand(2, 256))
+    print('facedecode', decode.shape)
+    
 
 if __name__ == '__main__':
     main()
