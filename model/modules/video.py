@@ -83,8 +83,8 @@ class VideoExtractor(nn.Module):
 		state_dict.pop('frontend3D.0.weight')
 		self.load_state_dict(state_dict, strict=False)
 		
-		# for p in self.trunk.parameters():
-		# 	p.requires_grad_(False)
+		for p in self.trunk.parameters():
+			p.requires_grad_(False)
 
 	def forward(self, x):
 		B, C, T, H, W = x.size()

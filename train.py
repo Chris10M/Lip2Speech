@@ -68,11 +68,11 @@ def main():
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/2b84dc9ae8b402414700fedf46d8f25e/143000_1625757194.pth'
+	saved_path = 'savedmodels/8a2dfd8411d9d58615d29966d765f128/2000_1625847272.pth'
 	
 	max_iter = 6400000
 	save_iter = 1000
-	n_img_per_gpu = 32
+	n_img_per_gpu = 16
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
