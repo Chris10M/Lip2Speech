@@ -68,11 +68,11 @@ def main():
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/2b84dc9ae8b402414700fedf46d8f25e/121000_1625711705.pth'
+	saved_path = 'savedmodels/2b84dc9ae8b402414700fedf46d8f25e/143000_1625757194.pth'
 	
 	max_iter = 6400000
 	save_iter = 1000
-	n_img_per_gpu = 36
+	n_img_per_gpu = 32
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
@@ -122,12 +122,13 @@ def main():
 		print(f'Model Loaded: {saved_path} @ start_it: {start_it}')
 
 
-	reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
+	# reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
+	reconstruction_criterion = TLoss()
 	# contrastive_criterion = MiniBatchConstrastiveLoss()
 	
 	## train loop
 	msg_iter = 50
-	loss_logs = collections.defaultdict(float)
+	loss_log = collections.defaultdict(float)
 	st = glob_st = time.time()
 	diter = iter(dl)
 	epoch = 0
@@ -140,28 +141,31 @@ def main():
 			epoch += 1
 			diter = iter(dl)
 			batch = next(diter)
-		
+
 		(videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
 	
 		videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
 		video_lengths, audio_lengths, melspec_lengths = video_lengths.to(device), audio_lengths.to(device), melspec_lengths.to(device)
 		mel_gates = mel_gates.to(device)
-		outputs, constrastive_features = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
+		outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
 		
-		mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
-	
-		mel_loss, postnet_loss, gate_loss, mel_l1_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
-		loss_logs['mel_loss'] += mel_loss.item()
-		loss_logs['postnet_loss'] += postnet_loss.item()
-		loss_logs['gate_loss'] += gate_loss.item()
-		loss_logs['mel_l1_loss'] += mel_l1_loss.item()
-
-		r_loss = mel_loss + postnet_loss + gate_loss + mel_l1_loss
-		loss_logs['r_loss'] += r_loss.item()
-
-		# c_loss = contrastive_criterion(constrastive_features)
 		
-		loss = r_loss #+ c_loss
+
+		# mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
+		# mel_loss, postnet_loss, gate_loss, mel_l1_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
+		# loss_log['mel_loss'] += mel_loss.item()
+		# loss_log['postnet_loss'] += postnet_loss.item()
+		# loss_log['gate_loss'] += gate_loss.item()
+		# loss_log['mel_l1_loss'] += mel_l1_loss.item()
+		# r_loss = mel_loss + postnet_loss + gate_loss + mel_l1_loss
+		# loss_log['r_loss'] += r_loss.item()
+		losses = dict()
+
+		losses = reconstruction_criterion(outputs, (melspecs, mel_gates), losses)
+
+		loss = sum(losses.values())
+		losses['loss'] = loss
+
 
 		optim.zero_grad()
 
@@ -179,12 +183,11 @@ def main():
 			grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), hparams.grad_clip_thresh)
 		
 		optim.step()
-		
-		loss_logs['loss'] += loss.item()
-		
-
+	
+	
 		if is_overflow: continue
 
+		for k, v in losses.items(): loss_log[k] += v.item()
 		if (it + 1) % save_iter == 0:
 				save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
 
@@ -208,7 +211,7 @@ def main():
 
 		#   print training log message
 		if (it+1) % msg_iter == 0:
-			for k, v in loss_logs.items(): loss_logs[k] = round(v / msg_iter, 2)
+			for k, v in loss_log.items(): loss_log[k] = round(v / msg_iter, 2)
 
 			ed = time.time()
 			t_intv, glob_t_intv = ed - st, ed - glob_st
@@ -217,7 +220,7 @@ def main():
 			msg = ', '.join([
 					f'epoch: {epoch}',
 					'it: {it}/{max_it}',         
-					*[f"{k}: {v}" for k, v in loss_logs.items()],
+					*[f"{k}: {v}" for k, v in loss_log.items()],
 					'eta: {eta}',
 					'time: {time:.2f}',
 				]).format(
@@ -226,12 +229,12 @@ def main():
 					time = t_intv,
 					eta = eta
 				)
-			Logger.tensor_board.log_training(loss_logs['loss'], grad_norm, hparams.learning_rate, t_intv, it + 1)
+			Logger.tensor_board.log_training(loss_log['loss'], grad_norm, hparams.learning_rate, t_intv, it + 1)
 			Logger.logger.info(msg)
 
-			Logger.tensor_board.log_alignment(alignments, it + 1)
+			# Logger.tensor_board.log_alignment(alignments, it + 1)
 
-			loss_logs = collections.defaultdict(float)
+			loss_log = collections.defaultdict(float)
 			st = ed
 
 	save_pth = osp.join(Logger.ModelSavePath, 'model_final.pth')

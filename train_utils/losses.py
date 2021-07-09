@@ -41,6 +41,37 @@ class Tacotron2Loss(nn.Module):
         return mel_loss, postnet_loss, gate_loss, mel_l1_loss     
 
 
+class TLoss(nn.Module):
+    def __init__(self):
+        super(TLoss, self).__init__()
+
+        self.L1 = nn.L1Loss()
+        self.MSE = nn.MSELoss()
+
+    def forward(self, model_output, targets, losses=None):
+        if losses is None:
+            losses = dict()
+
+        mel_target, gate_target = targets[0], targets[1]
+        mel_target.requires_grad = False
+        gate_target.requires_grad = False
+        gate_target = gate_target.view(-1, 1)
+
+        mel_out = model_output[0]
+        # gate_out = gate_out.view(-1, 1)
+        
+        mel_l1_loss = self.L1(mel_out, mel_target)
+        mel_loss = self.MSE(mel_out, mel_target) 
+        # postnet_loss = self.MSE(mel_out_postnet, mel_target)
+        # gate_loss = self.BCE(gate_out, gate_target)
+
+        losses['mel_l1_loss'] = mel_l1_loss
+        losses['mel_loss'] = mel_loss
+
+        return losses     
+
+
+
 class MiniBatchConstrastiveLoss(nn.Module):
     def __init__(self, t=0.07):
         super(MiniBatchConstrastiveLoss, self).__init__()

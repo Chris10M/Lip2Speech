@@ -72,7 +72,7 @@ class VideoExtractor(nn.Module):
 					frontend_relu,
 					nn.MaxPool3d( kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)))
 
-		self.lstm = nn.LSTM(self.backend_out, int(self.backend_out / 2), 1, batch_first=True, bidirectional=True)
+		# self.lstm = nn.LSTM(self.backend_out, int(self.backend_out / 2), 1, batch_first=True, bidirectional=True)
 		self.layer_norm = nn.LayerNorm(self.backend_out)		
 
 
@@ -95,7 +95,7 @@ class VideoExtractor(nn.Module):
 		x = x.view(-1, self.stage_out_channels)
 		x = x.view(B, Tnew, x.size(1))
 		
-		x, _ = self.lstm(x)
+		# x, _ = self.lstm(x)
 		x = self.layer_norm(x)
 		
 		return x

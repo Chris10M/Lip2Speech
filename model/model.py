@@ -46,10 +46,9 @@ class NoNameModel(nn.Module):
 		visual_features = torch.cat([face_features, video_features], dim=2)
 		visual_features = self.linear_projection(visual_features)
 	
-
 		outputs = self.decoder(visual_features, melspecs, encoder_lengths, melspec_lengths)
 
-		return outputs, (None, None, None, None)
+		return outputs
 				
 
 	def inference(self, video_frames, face_frames):
