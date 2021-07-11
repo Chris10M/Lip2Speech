@@ -118,7 +118,7 @@ class SpeakerEncoder(nn.Module):
 
         self.linear = nn.Linear(in_features=256, out_features=256)
         
-        state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']        
+        state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']        
         self.load_state_dict(state_dict, strict=False)
 
         for name, p in self.named_parameters():

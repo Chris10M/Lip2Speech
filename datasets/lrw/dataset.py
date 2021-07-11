@@ -146,7 +146,7 @@ class LRW(Dataset):
         speech = torch.from_numpy(audio)
 
     
-        speech = torch.cat([speech, torch.zeros(1, 1280)], dim=1) # silence, 5x hop_size
+        # speech = torch.cat([speech, torch.zeros(1, 1280)], dim=1) # silence, 5x hop_size
 
         melspec = self.melspec_g(speech).squeeze(0)
 

@@ -45,7 +45,7 @@ class TLoss(nn.Module):
     def __init__(self):
         super(TLoss, self).__init__()
 
-        self.L1 = nn.L1Loss()
+        self.BCE = nn.BCEWithLogitsLoss()
         self.MSE = nn.MSELoss()
 
     def forward(self, model_output, targets, losses=None):
@@ -58,15 +58,16 @@ class TLoss(nn.Module):
         gate_target = gate_target.view(-1, 1)
 
         mel_out = model_output[0]
-        # gate_out = gate_out.view(-1, 1)
+        mel_out_postnet = model_output[1]
+        gate_out = model_output[2]
+
+        gate_out = gate_out.view(-1, 1)
         
         # print(mel_out.shape, mel_target.shape)
 
-        # losses['mel_l1_loss'] = self.L1(mel_out, mel_target)
         losses['mel_loss'] = self.MSE(mel_out, mel_target) 
-        # postnet_loss = self.MSE(mel_out_postnet, mel_target)
-        # gate_loss = self.BCE(gate_out, gate_target)
-
+        losses['postnet_mel_loss'] = self.MSE(mel_out_postnet, mel_target)
+        losses['gate_loss'] = self.BCE(gate_out, gate_target)
 
         return losses     
 

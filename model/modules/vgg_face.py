@@ -25,7 +25,7 @@ class FaceRecognizer(nn.Module):
             nn.Linear(512, 256),
         )
 
-        m = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/speaker_encoder/savedmodels/156bcbfe7c66281240affb1d053dd279/437000_1625368231.pth', map_location=device)
+        m = torch.load('/home/hlcv_team028/Project/Lip2Speech/437000_1625368231.pth', map_location=device)
         self.load_state_dict(m['state_dict'])
 
     def forward(self, x):

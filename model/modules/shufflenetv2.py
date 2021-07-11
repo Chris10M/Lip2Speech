@@ -114,11 +114,11 @@ class ShuffleNetV2(nn.Module):
         # index 0 is invalid and should never be called.
         # only used for indexing convenience.
         if width_mult == 0.5:
-            self.stage_out_channels = [-1, 24,  48,  96, 192, 1024]
+            self.stage_out_channels = [-1, 24,  48,  96, 192, 1024 - 256]
         elif width_mult == 1.0:
-            self.stage_out_channels = [-1, 24, 116, 232, 464, 1024]
+            self.stage_out_channels = [-1, 24, 116, 232, 464, 1024 - 256]
         elif width_mult == 1.5:
-            self.stage_out_channels = [-1, 24, 176, 352, 704, 1024]
+            self.stage_out_channels = [-1, 24, 176, 352, 704, 1024 - 256]
         elif width_mult == 2.0:
             self.stage_out_channels = [-1, 24, 244, 488, 976, 2048]
         else:

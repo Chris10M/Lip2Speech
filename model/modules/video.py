@@ -62,7 +62,7 @@ class VideoExtractor(nn.Module):
 		shufflenet = ShuffleNetV2( input_size=96, width_mult=width_mult)
 		self.trunk = nn.Sequential( shufflenet.features, shufflenet.conv_last, shufflenet.globalpool)
 		self.frontend_nout = 24
-		self.backend_out = 1024 if width_mult != 2.0 else 2048
+		self.backend_out = 768 if width_mult != 2.0 else 2048
 		self.stage_out_channels = shufflenet.stage_out_channels[-1]
 
 		frontend_relu = nn.PReLU(num_parameters=self.frontend_nout) if relu_type == 'prelu' else nn.ReLU()
@@ -72,19 +72,17 @@ class VideoExtractor(nn.Module):
 					frontend_relu,
 					nn.MaxPool3d( kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)))
 
-		# self.lstm = nn.LSTM(self.backend_out, int(self.backend_out / 2), 1, batch_first=True, bidirectional=True)
 		self.layer_norm = nn.LayerNorm(self.backend_out)		
 
 
 		self._initialize_weights_randomly()
 
 
-		state_dict = torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
-		state_dict.pop('frontend3D.0.weight')
-		self.load_state_dict(state_dict, strict=False)
-		
-		for p in self.trunk.parameters():
-			p.requires_grad_(False)
+		# state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
+		# state_dict.pop('frontend3D.0.weight')
+		# self.load_state_dict(state_dict, strict=False)
+		# for p in self.trunk.parameters():
+		# 	p.requires_grad_(False)
 
 	def forward(self, x):
 		B, C, T, H, W = x.size()
@@ -95,7 +93,6 @@ class VideoExtractor(nn.Module):
 		x = x.view(-1, self.stage_out_channels)
 		x = x.view(B, Tnew, x.size(1))
 		
-		# x, _ = self.lstm(x)
 		x = self.layer_norm(x)
 		
 		return x

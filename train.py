@@ -1,5 +1,7 @@
+#!/usr/bin/env python3
+
 import torch
-from apex import amp
+# from apex import amp
 from torch import optim as Optimizer
 import numpy as np
 from torch.nn import parameter
@@ -33,12 +35,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class Logger:
 	logger = None
-	ModelSavePath = 'savedmodels'
+	ModelSavePath = '/home/hlcv_team028/Project/Lip2Speech/savedmodels'
 	tensor_board = None
 
 
 def set_model_logger(net):
-	model_info = str(net)
+	model_info = str(net)#!/usr/bin/env python3
+
 
 	respth = f'{Logger.ModelSavePath}/{hashlib.md5(model_info.encode()).hexdigest()}'
 	Logger.ModelSavePath = respth
@@ -62,18 +65,18 @@ def main():
 	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
 	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', 
 	# 		  mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
-	ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', face_augmentation=FaceAugmentation())
-
+	ds = LRW('/home/hlcv_team028/Project/Datasets/LRW', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = 'savedmodels/8a2dfd8411d9d58615d29966d765f128/2000_1625847272.pth'
+	saved_path = '/home/hlcv_team028/Project/Lip2Speech/savedmodels/77837f90f1b29d89f9868aba226d6dae/166000_1626021545.pth'
 	
+	tf_ratio = 0.3
 	max_iter = 6400000
-	save_iter = 1000
-	n_img_per_gpu = 16
-	n_workers = min(n_img_per_gpu, os.cpu_count())
+	save_iter = 2000
+	n_img_per_gpu = 72
+	n_workers = 6
 	
 	dl = DataLoader(ds,
 					batch_size=n_img_per_gpu,
@@ -85,7 +88,6 @@ def main():
 
 	optim = Optimizer.AdamW([{'params': net.decoder.parameters()},
 							 {'params': net.v_encoder.parameters()},
-							 {'params': net.linear_projection.parameters()}
 							], lr=hparams.learning_rate, weight_decay=hparams.weight_decay, amsgrad=True)
 
 	if hparams.fp16_run:
@@ -133,6 +135,8 @@ def main():
 	diter = iter(dl)
 	epoch = 0
 
+	batch = next(diter)
+
 	net = net.train()
 	for it in range(start_it, max_iter):
 		try:
@@ -142,12 +146,15 @@ def main():
 			diter = iter(dl)
 			batch = next(diter)
 
+			if epoch % 10 == 0:
+				tf_ratio += 0.1
+
 		(videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops = batch
 	
 		videos, audios, melspecs, face_crops = videos.to(device), audios.to(device), melspecs.to(device), face_crops.to(device)
 		video_lengths, audio_lengths, melspec_lengths = video_lengths.to(device), audio_lengths.to(device), melspec_lengths.to(device)
 		mel_gates = mel_gates.to(device)
-		outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths)
+		outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths, tf_ratio)
 		
 		
 
@@ -221,6 +228,7 @@ def main():
 					f'epoch: {epoch}',
 					'it: {it}/{max_it}',         
 					*[f"{k}: {v}" for k, v in loss_log.items()],
+					f'tf_ratio: {tf_ratio}',
 					'eta: {eta}',
 					'time: {time:.2f}',
 				]).format(
@@ -233,6 +241,7 @@ def main():
 			Logger.logger.info(msg)
 
 			# Logger.tensor_board.log_alignment(alignments, it + 1)
+			Logger.tensor_board.log_predictions(outputs, (melspecs, mel_gates))
 
 			loss_log = collections.defaultdict(float)
 			st = ed

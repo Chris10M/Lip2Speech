@@ -7,11 +7,11 @@ import torch.nn.functional as F
 
 try:
     from hparams import create_hparams
-    from .tacotron2 import Decoder as TacotronDecoder, Postnet, get_mask_from_lengths
+    from .tacotron2 import Decoder as TacotronDecoder, get_mask_from_lengths
 except:
     import sys; sys.path.append('../..')
     from hparams import create_hparams
-    from tacotron2 import Decoder as TacotronDecoder, Postnet, get_mask_from_lengths
+    from tacotron2 import Decoder as TacotronDecoder, get_mask_from_lengths
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -131,6 +131,105 @@ def create_mask(src, tgt):
     return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
 
 
+class PSine(nn.Module):
+    def __init__(self, dims, w=1, inplace=True):
+        super().__init__()
+        
+        self.w = nn.Parameter(torch.ones(dims) * w)
+        self.inplace = inplace
+        
+    def forward(self, x: Tensor):
+        if self.inplace:
+            return x.sin_().mul_(self.w)
+        else:
+            return torch.sin(x) * self.w
+
+
+class LinearNorm(torch.nn.Module):
+    def __init__(self, in_dim, out_dim, bias=True, w_init_gain='linear'):
+        super(LinearNorm, self).__init__()
+        self.linear_layer = torch.nn.Linear(in_dim, out_dim, bias=bias)
+
+        torch.nn.init.xavier_uniform_(
+            self.linear_layer.weight,
+            gain=torch.nn.init.calculate_gain(w_init_gain))
+
+    def forward(self, x):
+        return self.linear_layer(x)
+
+
+class ConvNorm(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1,
+                 padding=None, dilation=1, bias=True, w_init_gain='linear'):
+        super(ConvNorm, self).__init__()
+        if padding is None:
+            assert(kernel_size % 2 == 1)
+            padding = int(dilation * (kernel_size - 1) / 2)
+
+        self.conv = torch.nn.Conv1d(in_channels, out_channels,
+                                    kernel_size=kernel_size, stride=stride,
+                                    padding=padding, dilation=dilation,
+                                    bias=bias)
+
+        torch.nn.init.xavier_uniform_(
+            self.conv.weight, gain=torch.nn.init.calculate_gain(w_init_gain))
+
+    def forward(self, signal):
+        conv_signal = self.conv(signal)
+        return conv_signal
+
+
+class Postnet(nn.Module):
+    """Postnet
+        - Five 1-d convolution with 512 channels and kernel size 5
+    """
+
+    def __init__(self, hparams):
+        super(Postnet, self).__init__()
+        self.convolutions = nn.ModuleList()
+
+        self.convolutions.append(
+            nn.Sequential(
+                ConvNorm(hparams.n_mel_channels, hparams.postnet_embedding_dim,
+                         kernel_size=hparams.postnet_kernel_size, stride=1,
+                         padding=int((hparams.postnet_kernel_size - 1) / 2),
+                         dilation=1, w_init_gain='tanh'),
+                nn.BatchNorm1d(hparams.postnet_embedding_dim))
+        )
+
+        for i in range(1, hparams.postnet_n_convolutions - 1):
+            self.convolutions.append(
+                nn.Sequential(
+                    ConvNorm(hparams.postnet_embedding_dim,
+                             hparams.postnet_embedding_dim,
+                             kernel_size=hparams.postnet_kernel_size, stride=1,
+                             padding=int((hparams.postnet_kernel_size - 1) / 2),
+                             dilation=1, w_init_gain='tanh'),
+                    nn.BatchNorm1d(hparams.postnet_embedding_dim))
+            )
+
+        self.sin_activation = nn.ModuleList([PSine(hparams.postnet_embedding_dim) for _ in range(0, hparams.postnet_n_convolutions - 1)])
+
+        self.convolutions.append(
+            nn.Sequential(
+                ConvNorm(hparams.postnet_embedding_dim, hparams.n_mel_channels,
+                         kernel_size=hparams.postnet_kernel_size, stride=1,
+                         padding=int((hparams.postnet_kernel_size - 1) / 2),
+                         dilation=1, w_init_gain='linear'),
+                nn.BatchNorm1d(hparams.n_mel_channels))
+            )
+
+    def forward(self, x):
+        for i in range(len(self.convolutions) - 1):
+            x = self.convolutions[i](x).permute(0, 2, 1)
+            x = self.sin_activation[i](x).permute(0, 2, 1)
+            x = F.dropout(x, 0.5, self.training)
+            
+        x = F.dropout(self.convolutions[-1](x), 0.5, self.training)
+
+        return x
+
+
 class Decoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -141,7 +240,7 @@ class Decoder(nn.Module):
         self.mask_padding = hparams.mask_padding
 
         # self.decoder = TacotronDecoder(hparams)
-        # self.postnet = Postnet(hparams)
+        self.postnet = Postnet(hparams)
 
         self.hparams = hparams
 
@@ -178,36 +277,54 @@ class Decoder(nn.Module):
 
         FFN_HID_DIM = 256
         self.encoder_rnn = nn.LSTM(ENCODER_DIM, FFN_HID_DIM, 2, bidirectional=True, batch_first=True)
-        self.decoder_rnn = nn.LSTM(N_MELS, FFN_HID_DIM, 4, dropout=0.1, batch_first=True)
+        self.decoder_rnn = nn.LSTM(64, FFN_HID_DIM, 4, dropout=0.1, batch_first=True)
         self.fc_out = nn.Linear(FFN_HID_DIM, N_MELS)
 
-    def forward(self, encoder_outputs, mels, text_lengths, output_lengths):
+        self.prenet = nn.Sequential(
+            nn.Linear(N_MELS, 128),
+            PSine(128),
+            nn.Dropout(0.25),
+            nn.Linear(128, 128),
+            PSine(128),
+            nn.Dropout(0.25),
+            nn.Linear(128, 64),
+        )
+        self.stop_token_layer = LinearNorm(2 * FFN_HID_DIM, 1, w_init_gain='sigmoid')
+
+    def forward(self, encoder_outputs, mels, text_lengths, output_lengths, tf_ratio):
         mels = mels.permute(0, 2, 1)
 
         N, cur_max_step, C = mels.shape[:3]
 
         _, (hidden, cell) = self.encoder_rnn(encoder_outputs)
+
+        encoder_forward_hidden = hidden[-2] 
         
         ys = torch.tile(self.initial_context, (N, 1, 1))
 
         teacher_input = torch.cat([ys, mels], dim=1)
         
         outputs = torch.zeros(N, cur_max_step, C).to(device)
-        for i in range(cur_max_step - 1):
+        stop_tokens = torch.zeros(N, cur_max_step, 1).to(device)
+        for i in range(cur_max_step):
 
-            # if torch.rand(1) > 0.5:
-            ys = teacher_input[:, i, :].unsqueeze(1)
-
+            if torch.rand(1) > tf_ratio:
+                ys = teacher_input[:, i, :].unsqueeze(1)
+            
+            ys = self.prenet(ys)
             output, (hidden, cell) = self.decoder_rnn(ys,  (hidden, cell))
            
             ys = self.fc_out(output)
 
             outputs[:, i, :] = ys.squeeze(1)
 
+            stop_tokens[:, i, :] = self.stop_token_layer(torch.cat([hidden[-1], encoder_forward_hidden], dim=1))
+
         outputs = outputs.permute(0, 2, 1)    
 
+        post_preds = self.postnet(outputs) + outputs
 
-        return (outputs, )
+        return (outputs, post_preds, stop_tokens)
         
         # output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
 
