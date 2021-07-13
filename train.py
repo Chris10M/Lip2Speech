@@ -70,9 +70,9 @@ def main():
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = '/home/hlcv_team028/Project/Lip2Speech/savedmodels/77837f90f1b29d89f9868aba226d6dae/166000_1626021545.pth'
+	saved_path = '/home/hlcv_team028/Project/Lip2Speech/savedmodels/d915e48826cab344bc1535e895d5959e/242000_1626113062.pth'
 	
-	tf_ratio = 0.3
+	tf_ratio = 0.95
 	max_iter = 6400000
 	save_iter = 2000
 	n_img_per_gpu = 72

@@ -55,7 +55,7 @@ class NoNameModel(nn.Module):
 		with torch.no_grad():
 			video_features = self.v_encoder(video_frames)
 						
-			face_features = self.vgg_face(face_frames[:, 0, :, :, :])
+			face_features = self.vgg_face.inference(face_frames[:, 0, :, :, :])
 			
 			N, T, C = video_features.shape
 			face_features = face_features.unsqueeze(1).repeat(1, T, 1)
