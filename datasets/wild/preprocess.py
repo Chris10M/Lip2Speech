@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+import re
 import torch
 import sys
 import torch
@@ -6,31 +8,54 @@ import os
 import json
 import numpy as np
 import cv2
+import pickle
+import bz2
 import torchaudio
-import youtube_dl
+import torchvision.transforms as transforms
 import ffmpeg
 import torchvision
 from multiprocessing.pool import ThreadPool
 from fast_detector import FaceDetector
 sys.path.extend(['..'])
 from spectograms import MelSpectrogram
-
-
-ROOT_PATH = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL'
-WORKERS = 3
-
-
+from face_utils import align_and_crop_face
+from facenet_pytorch import MTCNN, InceptionResnetV1
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-FDS = [FaceDetector() for _ in range(WORKERS)]
+
+
+ROOT_PATH = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD'
+TARGET_FACE = '/home/christen/Downloads/Elon_Musk_Royal_Society.jpg'
+
+WORKERS = 6
+SPLIT_SECOND = 2
+
+
+with torch.no_grad():
+    TARGET_FACE_EMBEDDING = InceptionResnetV1(pretrained='vggface2').eval()((transforms.Compose([
+    transforms.Lambda(lambda im: (im.float() - 127.5) / 128.0),
+    ])(torch.from_numpy(cv2.cvtColor(cv2.resize(cv2.imread(TARGET_FACE), (160, 160)), cv2.COLOR_BGR2RGB))).unsqueeze(0).permute(0, 3, 1, 2))).to(device)
+
+
+FDS = [FaceDetector(target_face_embedding=TARGET_FACE_EMBEDDING) for _ in range(WORKERS)]
 melspectogram = MelSpectrogram().to(device)
+
+
+def save2pickle(filename, data=None):                                               
+    assert data is not None, "data is {}".format(data)                           
+    if not os.path.exists(os.path.dirname(filename)):                            
+        os.makedirs(os.path.dirname(filename), exist_ok=True)                                   
+    
+    with bz2.BZ2File(filename, 'w') as f:
+            pickle.dump(data, f)
 
 
 def write_segment(segment_info): 
     idx, video_path, timestamp, save_path = segment_info
     json_path = save_path[:-3] + 'json'
     audio_path = save_path[:-3] + 'wav'
-    mel_path = save_path[:-3] + '.npy'
+    mel_path = save_path[:-3] + 'npz'
+    face_path = save_path[:-4] + '_face.npz'
 
     start_time, end_time = timestamp
 
@@ -47,17 +72,29 @@ def write_segment(segment_info):
     frames, audio, meta = torchvision.io.read_video(save_path)
 
     melspec = melspectogram(audio.to(device)).cpu().numpy()
-    np.save(mel_path, melspec)    
+    np.savez_compressed(mel_path, data=melspec)
 
     face_infos = FDS[idx % WORKERS](frames)
 
+    if face_infos is None: return
+
     video_info = dict()
+    faces = list()
     for idx, face_info in enumerate(face_infos):
         if face_info is None:
             return idx # dont save the video segment.
 
         box, landmark = face_info
         video_info[idx] = {"face_coords": box.tolist(), "landmarks": landmark.tolist()}
+
+        frame = frames[idx, :, :, :].permute(2, 0, 1)
+    
+        face = align_and_crop_face(frame, box, landmark).permute(1, 2, 0).numpy()[:, :, ::-1]
+
+        faces.append(face)
+    
+    faces = [cv2.imencode('.jpg', im, [int(cv2.IMWRITE_JPEG_QUALITY), 80])[1] for im in faces]    
+    save2pickle(face_path, data=faces)
 
     with open(json_path, 'w') as json_file:
         json.dump(video_info, json_file)
@@ -69,7 +106,7 @@ def split_video(idx, total,video_path, folder_path):
     video_info = ffmpeg.probe(video_path)['format']
     duration = round(float(video_info['duration']), 2)
     
-    splits = np.arange(0, duration, 5)
+    splits = np.arange(0, duration, SPLIT_SECOND)
     
     # duration - splits[-1]
     segment_infos = list() 
@@ -81,7 +118,6 @@ def split_video(idx, total,video_path, folder_path):
 
     segment_infos.append([i + 1, video_path, [splits[-1], duration], f'{folder_path}/{splits[-1]}.mp4'])
     
-
     results = ThreadPool(WORKERS).imap_unordered(write_segment, segment_infos)
     
     cnt = 0

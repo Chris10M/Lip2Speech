@@ -6,7 +6,9 @@ Date: 09/27/2020 by Cunjian Chen (ccunjian@gmail.com)
 """
 from pygments.unistring import No
 import torch
+from facenet_pytorch import InceptionResnetV1
 from torch._C import dtype
+import torchvision.transforms as transforms
 import torch.nn.functional as F
 import time
 import cv2
@@ -15,6 +17,7 @@ import onnx
 import os
 import onnxruntime as ort
 import onnx
+from torchvision.transforms.functional import crop
 import cv2
 from openvino.inference_engine import IECore
 
@@ -24,12 +27,15 @@ except:
     from vision.utils import box_utils_numpy as box_utils; from common.utils import BBox
 
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 
 class FaceDetector:
     MODEL_BASE_PATH = 'fast_detector/models'
 
 
-    def __init__(self, batch_size=32, threshold=0.7) -> None:
+    def __init__(self, batch_size=32, threshold=0.9, target_face_embedding=None) -> None:
         ie = IECore()
         model_bin = os.path.splitext(f"{self.MODEL_BASE_PATH}/mobilefacenet.xml")[0] + ".bin"
         net = ie.read_network(model=f"{self.MODEL_BASE_PATH}/mobilefacenet.xml", weights=model_bin)
@@ -45,12 +51,21 @@ class FaceDetector:
         self.batch_size = batch_size
         self.threshold = threshold
 
+        self.target_face_embedding = target_face_embedding
+        if self.target_face_embedding is not None:
+            self.face_recognition = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+            self.face_recog_resize = transforms.Compose([
+            transforms.Resize((160, 160)),
+            transforms.Lambda(lambda im: (im.float() - 127.5) / 128.0),
+            ])
+
+
     def __call__(self, input):
         images = (input - torch.tensor([127, 127, 127])) / 128
         images = images.permute(0, 3, 1, 2)
         
         N, C, H, W = images.shape
-        resized_images = F.interpolate(images.float(), (240, 320), mode='bilinear', align_corners=True).numpy()
+        resized_images = F.interpolate(images.float(), (240, 320), mode='bicubic', align_corners=True).numpy()
 
         input = input.numpy()
 
@@ -60,11 +75,39 @@ class FaceDetector:
             confidences, boxes = self.ort_session.run(None, {self.fd_name: resized_image})
             
             boxes, labels, probs = self.predict(W, H, confidences, boxes, self.threshold)
-            box = self.get_center_face(W, H, boxes)
             
+            if self.target_face_embedding is None:
+                box = self.get_center_face(W, H, boxes)
+            else:   
+                cropped_faces = list() 
+                fr_compatible_boxes = list()
+                for box in boxes:
+                    left, top, right, bottom = box
+                    fr_compatible_boxes.append([top, right, bottom, left])
+
+                    x1, y1, x2, y2 = box
+                    cropped_faces.append(self.face_recog_resize(torch.from_numpy(input[i, y1: y2, x1: x2]).permute(2, 0, 1)))
+
+                if len(cropped_faces) == 0:
+                    return None
+            
+                cropped_faces = torch.stack(cropped_faces).to(device)
+                with torch.no_grad():
+                    face_encodings = self.face_recognition(cropped_faces)
+                                
+                face_distances = np.array([(self.target_face_embedding - e2).norm().cpu().numpy() for e2 in face_encodings])
+                
+                if not np.any(face_distances < 0.9):
+                    return None
+                
+                result_idx = np.argmin(face_distances)
+                box = boxes[result_idx]
+
+
             if box is None: 
                 faces.append(None)
                 continue
+            
             
             landmark = self.predict_landmarks(input[i], box)
             
