@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import random
 import re
 import torch
 import sys
@@ -27,7 +28,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 ROOT_PATH = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD'
 TARGET_FACE = '/home/christen/Downloads/Elon_Musk_Royal_Society.jpg'
 
-WORKERS = 6
+WORKERS = 3
 SPLIT_SECOND = 2
 
 
@@ -52,6 +53,7 @@ def save2pickle(filename, data=None):
 
 def write_segment(segment_info): 
     idx, video_path, timestamp, save_path = segment_info
+    done_path = save_path[:-3] + 'done'
     json_path = save_path[:-3] + 'json'
     audio_path = save_path[:-3] + 'wav'
     mel_path = save_path[:-3] + 'npz'
@@ -59,7 +61,7 @@ def write_segment(segment_info):
 
     start_time, end_time = timestamp
 
-    if os.path.isfile(json_path) and os.path.isfile(audio_path) and os.path.isfile(mel_path):
+    if os.path.isfile(done_path):
         print(f'{idx} Already Processed')
         return 
 
@@ -76,12 +78,15 @@ def write_segment(segment_info):
 
     face_infos = FDS[idx % WORKERS](frames)
 
-    if face_infos is None: return
+    if face_infos is None: 
+        with open(done_path, 'w') as txt_file: ...
+        return
 
     video_info = dict()
     faces = list()
     for idx, face_info in enumerate(face_infos):
         if face_info is None:
+            with open(done_path, 'w') as txt_file: ...
             return idx # dont save the video segment.
 
         box, landmark = face_info
@@ -99,6 +104,7 @@ def write_segment(segment_info):
     with open(json_path, 'w') as json_file:
         json.dump(video_info, json_file)
 
+    with open(done_path, 'w') as txt_file: ...
     return idx
 
 
@@ -118,6 +124,8 @@ def split_video(idx, total,video_path, folder_path):
 
     segment_infos.append([i + 1, video_path, [splits[-1], duration], f'{folder_path}/{splits[-1]}.mp4'])
     
+    random.shuffle(segment_infos)
+
     results = ThreadPool(WORKERS).imap_unordered(write_segment, segment_infos)
     
     cnt = 0

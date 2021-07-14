@@ -5,6 +5,8 @@ import torch.nn as nn
 import torchvision
 import ffmpeg
 import torchaudio
+import bz2
+import pickle
 import torchvision.transforms as transforms
 import cv2
 import math
@@ -71,6 +73,13 @@ def x_round(x):
     return math.floor(x * 4) / 4
 
 
+def loadframes(filename):
+    with bz2.BZ2File(filename, 'r') as f:
+        data = pickle.load(f)
+    
+    return [cv2.cvtColor(cv2.imdecode(imn, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB) for imn in data]
+
+
 class WILD(Dataset):
     def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None, *args, **kwargs):
         super(WILD, self).__init__(*args, **kwargs)
@@ -113,10 +122,11 @@ class WILD(Dataset):
                     video_path = os.path.join(root, filename)
                     audio_path = os.path.join(root, filename.replace(format, '.wav'))
                     frame_info_path = os.path.join(root, filename.replace(format, '.json'))
-                    spec_path = os.path.join(root, filename.replace(format, '..npy'))
-
+                    spec_path = os.path.join(root, filename.replace(format, '.npz'))
+                    face_path = video_path[:-4] + '_face.npz'
+        
                     if os.path.isfile(audio_path) and os.path.isfile(frame_info_path) and os.path.isfile(spec_path):
-                        self.items[index] = [video_path, audio_path, spec_path, frame_info_path]
+                        self.items[index] = [video_path, audio_path, spec_path, face_path, frame_info_path]
                         
                         index += 1
 
@@ -126,109 +136,19 @@ class WILD(Dataset):
         print(f'Size of {type(self).__name__}: {self.len}')
 
         random.shuffle(self.items)
-        self.item_iter = iter(self.items)
-        
-        self.current_item = None
-        self.current_item_attributes = dict()
-        
+
     def __len__(self):
         return self.len
-    
-    def reset_item(self):
-        self.current_item = None
-        return self['item']
-
-    def get_item(self):
-        try:
-            item_idx = next(self.item_iter)
-        except StopIteration:
-            random.shuffle(self.items)
-            self.item_iter = iter(self.items)
             
-            item_idx = next(self.item_iter)
+    def __getitem__(self, idx):
+        video_path, audio_path, spec_path, face_path, frame_info_path = self.items[idx] 
 
+        speech, sampling_rate = torchaudio.load(audio_path, normalize=True, format='wav')
 
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info: item_idx = (item_idx + worker_info.id) % len(self.items)
-
-
-        video_pth, audio_path, spec_path, frame_info_path = self.items[item_idx]
-
-        try:
-            video_info = ffmpeg.probe(video_pth)['format']
-        except:
-            return self.get_item()
-
-        self.current_item = self.items[item_idx] 
-        self.current_item_attributes = {
-            'start_time': 0,
-            'end_time': x_round(float(video_info['duration']))
-        }
-        return self.current_item
-        
-    def __getitem__(self, _):
-        if self.current_item is None:
-            item = self.get_item()
-        else:
-            item = self.current_item
-        
-        video_pth, audio_pth, spec_pth, frame_info_path = item 
-                
-        overlap = 0.20
-        start_time = max(self.current_item_attributes['start_time'] - overlap, 0)
-        end_time = self.current_item_attributes['end_time']
-        
-        if start_time > end_time:
-            return self.reset_item()
-
-        duration = self.duration
-        self.current_item_attributes['start_time'] += duration
-        
-        try:
-            speech, sampling_rate = torchaudio.load(audio_pth, frame_offset=int(16000 * start_time), 
-                                                               num_frames=int(16000 * duration), normalize=True, format='wav')                       
-        except:
-            # traceback.print_exc()
-            return self.reset_item()
-        
-        assert sampling_rate == 16000
-        
-        if speech.shape[1] == 0:
-            return self.reset_item()
-
-        melspec = torch.from_numpy(np.load(spec_pth))
-        melspec = melspec[:, :, int(63 * start_time): int(63 * (start_time + duration))] # 1sec - 63 frames
+        melspec = torch.from_numpy(np.load(spec_path)['data'])
         melspec = melspec.squeeze(0)
 
-        
-        frames, _, _ = torchvision.io.read_video(video_pth, start_pts=start_time, end_pts=start_time + duration, pts_unit='sec')
-        frames = frames.permute(0, 3, 1, 2)
-
-        N = frames.shape[0]
-
-        absoulte_start_frame_in_video = int(start_time * 25)
-        
-        with open(frame_info_path, 'r') as json_path:
-            frame_info = json.load(json_path)
-        
-        faces = list()
-        for idx in range(N):
-            absolute_frame_idx = str(absoulte_start_frame_in_video + idx)
-            if absolute_frame_idx not in frame_info: return self.reset_item()
-
-            landmarks = frame_info[absolute_frame_idx]['landmarks']
-            face_coords = np.array(frame_info[absolute_frame_idx]['face_coords'], dtype=np.int)
-        
-            face_coords[face_coords < 0] = 0
-            
-            face = align_and_crop_face(frames[idx, :, :, :], face_coords, landmarks)
-            
-            if face.shape[1] < 16 or face.shape[2] < 16: return self.reset_item()
-
-            faces.append(face)
-
-        if len(faces) == 0:
-            return self.reset_item()
+        faces = [torch.from_numpy(face).permute(2, 0, 1) for face in loadframes(face_path)]
 
         faces = self.face_augmentation(faces)
 
@@ -248,7 +168,7 @@ class WILD(Dataset):
 
 
 def main():    
-    ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL', mode='test', duration=1)
+    ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD', mode='test', duration=1)
 
     dl = DataLoader(ds,
                     batch_size=8,
@@ -260,6 +180,7 @@ def main():
 
     from IPython.display import Audio, display
 
+
     for bdx, batch in enumerate(dl):
         (video, video_lengths), (speeches, audio_lengths), (melspecs, melspec_lengths, mel_gates), faces = batch
         
@@ -267,12 +188,18 @@ def main():
         print('video.shape', video.shape)
         print('faces.shape ', faces.shape)
         print('frames[0][0].shape ', frames[0][0].shape)
+        print('melspecs.shape ', melspecs.shape)
         # print('speech.shape ', speech.shape)
 
-
+        # continue
         B, C, T, H, W = video.shape
 
         for k in range(B):
+            face = faces[k, 0, :, :, :].permute(1, 2, 0).numpy()
+            face = ((face * 128.0) + 127.5).astype(dtype=np.uint8)
+            
+            cv2.imshow('face', face[:, :, :: -1])
+
             for i in range(T):
                 image = frames[k, :, i, :, :].permute(1, 2, 0).numpy()
                 image = image * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
