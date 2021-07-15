@@ -13,7 +13,7 @@ def train_collate_fn_pad(batch):
 
     padded_lower_faces = torch.zeros(len(lower_faces), max_frames_in_batch, *tuple(lower_faces[0].shape[1:]))
     padded_speeches = torch.zeros(len(speeches), 1, max_samples_in_batch)
-    padded_melspecs = torch.zeros(len(melspecs), melspecs[0].shape[0], max_melspec_samples_in_batch)
+    padded_melspecs = torch.ones(len(melspecs), melspecs[0].shape[0], max_melspec_samples_in_batch) * -11.5129
     mel_gate_padded = torch.zeros(len(melspecs), max_melspec_samples_in_batch)
 
     video_lengths = list()
