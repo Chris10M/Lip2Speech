@@ -232,7 +232,8 @@ class Decoder(nn.Module):
 			stop_tokens = self.stop_token_layer(torch.cat([hidden[-1], encoder_forward_hidden], dim=1))
 		
 			stop_indices = (torch.sigmoid(stop_tokens) > 0.5).nonzero()
-			if torch.count_nonzero(stop_indices):   
+			
+			if len(stop_indices):   
 				for idx in stop_indices[:, 0]:
 					if output_lengths[idx] == self.hparams.max_decoder_steps:
 						output_lengths[idx] = i + 1
