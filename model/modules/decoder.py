@@ -149,10 +149,6 @@ class Decoder(nn.Module):
 		self.K = nn.Conv1d(512, 512, 9)			
 		self.V = nn.Conv1d(512, 512, 9)				
 		self.Q = nn.Conv1d(64, 512, 24, padding=24 // 2)
-		# self.projection = nn.Linear(512, 64)		
-		# self.gamma = nn.Parameter(torch.zeros(1))		
-
-		self.H = nn.Sequential(nn.Linear(80, 8), nn.ReLU(True), nn.Linear(8, 64))
 
 	def forward(self, encoder_outputs, mels, text_lengths, output_lengths, tf_ratio):
 		mels = mels.permute(0, 2, 1)
@@ -185,9 +181,7 @@ class Decoder(nn.Module):
 			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1)).permute(0, 2, 1)
 			a = torch.softmax(torch.bmm(q * (512 ** 0.5), k), dim=-1)
 			o = torch.bmm(a, v)[:, i, :].unsqueeze(1)
-			
-			# o = self.gamma * self.projection(o).unsqueeze(1)
-					
+								
 			ys = torch.cat([ys, o], dim=2) 
 			
 			
@@ -198,14 +192,12 @@ class Decoder(nn.Module):
 			outputs[:, i, :] = ys.squeeze(1)
 
 			stop_tokens[:, i, :] = self.stop_token_layer(torch.cat([hidden[-1], encoder_forward_hidden], dim=1))
-
-		H = self.H(outputs)
 		
 		outputs = outputs.permute(0, 2, 1)    
 
 		post_preds = self.postnet(outputs) + outputs
 
-		return (outputs, post_preds, stop_tokens, H)
+		return (outputs, post_preds, stop_tokens)
 		
 	
 	def inference(self, encoder_outputs):
