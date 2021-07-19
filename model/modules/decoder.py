@@ -180,6 +180,8 @@ class Decoder(nn.Module):
 			context[:, i, :] = ys[:, 0, :]
 			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1)).permute(0, 2, 1)
 			a = torch.softmax(torch.bmm(q * (512 ** 0.5), k), dim=-1)
+			a = F.dropout(a, 0.1, self.training)
+
 			o = torch.bmm(a, v)[:, i, :].unsqueeze(1)
 								
 			ys = torch.cat([ys, o], dim=2) 
@@ -200,7 +202,7 @@ class Decoder(nn.Module):
 		return (outputs, post_preds, stop_tokens)
 		
 	
-	def inference(self, encoder_outputs):
+	def inference(self, encoder_outputs, return_attention_map=False):
 		N, src_seq_len = encoder_outputs.shape[:2]
 				
 		encoder_outputs, (hidden, cell) = self.encoder_rnn(encoder_outputs)
@@ -246,7 +248,10 @@ class Decoder(nn.Module):
 		outputs = outputs.permute(0, 2, 1)    
 		outputs = self.postnet(outputs) + outputs
 
-		return outputs, output_lengths, a
+		if return_attention_map:
+			return outputs, output_lengths, a.T
+
+		return outputs, output_lengths
 
 
 def main():
