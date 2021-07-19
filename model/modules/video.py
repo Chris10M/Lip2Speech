@@ -62,8 +62,7 @@ class VideoExtractor(nn.Module):
 		shufflenet = ShuffleNetV2( input_size=96, width_mult=width_mult)
 		self.trunk = nn.Sequential( shufflenet.features, shufflenet.conv_last, shufflenet.globalpool)
 		self.frontend_nout = 24
-		self.backend_out = 768 if width_mult != 2.0 else 2048
-		self.stage_out_channels = shufflenet.stage_out_channels[-1]
+		self.backend_out = shufflenet.stage_out_channels[-1]
 
 		frontend_relu = nn.PReLU(num_parameters=self.frontend_nout) if relu_type == 'prelu' else nn.ReLU()
 		self.frontend3D = nn.Sequential(
@@ -77,20 +76,13 @@ class VideoExtractor(nn.Module):
 
 		self._initialize_weights_randomly()
 
-
-		# state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
-		# state_dict.pop('frontend3D.0.weight')
-		# self.load_state_dict(state_dict, strict=False)
-		# for p in self.trunk.parameters():
-		# 	p.requires_grad_(False)
-
 	def forward(self, x):
 		B, C, T, H, W = x.size()
 		x = self.frontend3D(x)
 		Tnew = x.shape[2]    # outpu should be B x C2 x Tnew x H x W
 		x = threeD_to_2D_tensor( x )
 		x = self.trunk(x)
-		x = x.view(-1, self.stage_out_channels)
+		x = x.view(-1, self.backend_out)
 		x = x.view(B, Tnew, x.size(1))
 		
 		x = self.layer_norm(x)
