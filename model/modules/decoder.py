@@ -132,7 +132,7 @@ class Decoder(nn.Module):
 
 		FFN_HID_DIM = 256
 		self.encoder_rnn = nn.LSTM(ENCODER_DIM, FFN_HID_DIM, 2, bidirectional=True, batch_first=True)
-		self.decoder_rnn = nn.LSTM(64, FFN_HID_DIM, 4, dropout=0.1, batch_first=True)
+		self.decoder_rnn = nn.LSTM(64 + 512, FFN_HID_DIM, 4, dropout=0.1, batch_first=True)
 		self.fc_out = nn.Linear(FFN_HID_DIM, N_MELS)
 
 		self.prenet = nn.Sequential(
@@ -149,8 +149,10 @@ class Decoder(nn.Module):
 		self.K = nn.Conv1d(512, 512, 9)			
 		self.V = nn.Conv1d(512, 512, 9)				
 		self.Q = nn.Conv1d(64, 512, 24, padding=24 // 2)
-		self.projection = nn.Linear(512, 64)		
-		self.gamma = nn.Parameter(torch.zeros(1))		
+		# self.projection = nn.Linear(512, 64)		
+		# self.gamma = nn.Parameter(torch.zeros(1))		
+
+		self.H = nn.Sequential(nn.Linear(80, 8), nn.ReLU(True), nn.Linear(8, 64))
 
 	def forward(self, encoder_outputs, mels, text_lengths, output_lengths, tf_ratio):
 		mels = mels.permute(0, 2, 1)
@@ -160,8 +162,8 @@ class Decoder(nn.Module):
 		encoder_outputs, (hidden, cell) = self.encoder_rnn(encoder_outputs)
 
 		k = self.K(encoder_outputs.permute(0, 2, 1))
-		v = self.V(encoder_outputs.permute(0, 2, 1))
-		a = torch.softmax(torch.bmm(k, v.permute(0, 2, 1)), dim=-1)
+		v = self.V(encoder_outputs.permute(0, 2, 1)).permute(0, 2, 1)
+		
 
 		encoder_forward_hidden = hidden[-2] 
 		
@@ -180,12 +182,15 @@ class Decoder(nn.Module):
 			ys = self.prenet(ys)
 
 			context[:, i, :] = ys[:, 0, :]
-			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1))
-			o = torch.bmm(a, q).permute(0, 2, 1)[:, i, :]
-			o = self.gamma * self.projection(o).unsqueeze(1)
+			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1)).permute(0, 2, 1)
+			a = torch.softmax(torch.bmm(q * (512 ** 0.5), k), dim=-1)
+			o = torch.bmm(a, v)[:, i, :].unsqueeze(1)
+			
+			# o = self.gamma * self.projection(o).unsqueeze(1)
 					
-			ys = ys + o 
-
+			ys = torch.cat([ys, o], dim=2) 
+			
+			
 			output, (hidden, cell) = self.decoder_rnn(ys,  (hidden, cell))
 		   
 			ys = self.fc_out(output)
@@ -194,21 +199,24 @@ class Decoder(nn.Module):
 
 			stop_tokens[:, i, :] = self.stop_token_layer(torch.cat([hidden[-1], encoder_forward_hidden], dim=1))
 
+		H = self.H(outputs)
+		
 		outputs = outputs.permute(0, 2, 1)    
 
 		post_preds = self.postnet(outputs) + outputs
 
-		return (outputs, post_preds, stop_tokens)
+		return (outputs, post_preds, stop_tokens, H)
 		
 	
 	def inference(self, encoder_outputs):
 		N, src_seq_len = encoder_outputs.shape[:2]
 				
 		encoder_outputs, (hidden, cell) = self.encoder_rnn(encoder_outputs)
+
 		k = self.K(encoder_outputs.permute(0, 2, 1))
-		v = self.V(encoder_outputs.permute(0, 2, 1))
-		a = torch.softmax(torch.bmm(k, v.permute(0, 2, 1)), dim=-1)
+		v = self.V(encoder_outputs.permute(0, 2, 1)).permute(0, 2, 1)
 		
+
 		encoder_forward_hidden = hidden[-2]
 		
 		ys = torch.tile(self.initial_context, (N, 1, 1))
@@ -220,11 +228,11 @@ class Decoder(nn.Module):
 			ys = self.prenet(ys)
 
 			context[:, i, :] = ys[:, 0, :]
-			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1))
-			o = torch.bmm(a, q).permute(0, 2, 1)[:, i, :]
-			o = self.gamma * self.projection(o).unsqueeze(1)
+			q = self.Q(context[:, :i + 1, :].permute(0, 2, 1)).permute(0, 2, 1)
+			a = torch.softmax(torch.bmm(q * (512 ** 0.5), k), dim=-1)
+			o = torch.bmm(a, v)[:, i, :].unsqueeze(1)
 				
-			ys = ys + o 
+			ys = torch.cat([ys, o], dim=2) 
 
 
 			output, (hidden, cell) = self.decoder_rnn(ys,  (hidden, cell))
@@ -246,14 +254,14 @@ class Decoder(nn.Module):
 		outputs = outputs.permute(0, 2, 1)    
 		outputs = self.postnet(outputs) + outputs
 
-		return outputs, output_lengths
+		return outputs, output_lengths, a
 
 
 def main():
 	decoder = Decoder()
 
 	visual_features, melspecs, encoder_lengths, melspec_lengths = torch.rand(36, 29, 1024), torch.rand(36, 80, 82), torch.ones(36, dtype=torch.long) * 29, torch.ones(36, dtype=torch.long) * 82
-	outs = decoder(visual_features, melspecs, encoder_lengths, melspec_lengths)
+	outs = decoder(visual_features, melspecs, encoder_lengths, melspec_lengths, 0.5)
 	print(outs[0].shape)
 
 	print(decoder.inference(torch.rand(36, 29, 1024)).shape)
