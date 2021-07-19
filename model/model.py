@@ -24,18 +24,16 @@ class NoNameModel(nn.Module):
 		self.vgg_face = FaceRecognizer()
 
 		self.v_encoder = VideoExtractor()
-		# self.linear_projection = nn.Linear(256 + hparams.encoder_embedding_dim, int(hparams.encoder_embedding_dim))
 		self.decoder = Decoder()
 
 
 	def forward(self, video_frames, face_frames, audio_frames, melspecs, video_lengths, audio_lengths, melspec_lengths, tf_ratio):
 		_, _, oldT, _, _ = video_frames.shape
 		
-		video_features = self.v_encoder(video_frames)
-		
+		video_features = F.dropout(self.v_encoder(video_frames), 0.3, self.training)
 		N, T, C = video_features.shape
 
-		encoder_lengths = video_lengths #torch.div(video_lengths, int(oldT / T), rounding_mode='trunc')
+		encoder_lengths = video_lengths
 		
 		face_features = self.vgg_face.inference(face_frames[:, 0, :, :, :])
 		# face_features = self.speaker_encoder.inference(audio_frames)
@@ -44,7 +42,6 @@ class NoNameModel(nn.Module):
 		face_features = face_features.unsqueeze(1).repeat(1, T, 1)
 		
 		visual_features = torch.cat([video_features, face_features], dim=2)
-		# visual_features = self.linear_projection(visual_features)
 	
 		outputs = self.decoder(visual_features, melspecs, encoder_lengths, melspec_lengths, tf_ratio)
 
@@ -61,7 +58,6 @@ class NoNameModel(nn.Module):
 			face_features = face_features.unsqueeze(1).repeat(1, T, 1)
 
 			visual_features = torch.cat([video_features, face_features], dim=2)
-			# visual_features = self.linear_projection(visual_features)
 
 			outputs = self.decoder.inference(visual_features)
 
