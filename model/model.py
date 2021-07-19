@@ -58,7 +58,7 @@ class SPILSS(nn.Module):
 def get_network(mode):
 	assert mode in ('train', 'test')
 
-	model = SPILSS(train=(mode == 'train'))
+	model = SPILSS()
 
 	if mode == 'train':
 		model = model.train()
