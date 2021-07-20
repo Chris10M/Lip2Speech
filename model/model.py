@@ -39,18 +39,21 @@ class SPILSS(nn.Module):
 		return outputs
 				
 
-	def inference(self, video_frames, face_frames):
+	def inference(self, video_frames, face_frames, speaker_embedding=None, **kwargs):
 		with torch.no_grad():
 			video_features = self.v_encoder(video_frames)
-						
-			face_features = self.vgg_face.inference(face_frames[:, 0, :, :, :])
-			
+
+			if speaker_embedding is None:			
+				face_features = self.vgg_face.inference(face_frames[:, 0, :, :, :])
+			else:
+				face_features = speaker_embedding
+				
 			N, T, C = video_features.shape
 			face_features = face_features.unsqueeze(1).repeat(1, T, 1)
 
 			visual_features = torch.cat([video_features, face_features], dim=2)
 
-			outputs = self.decoder.inference(visual_features)
+			outputs = self.decoder.inference(visual_features, **kwargs)
 
 		return outputs
 

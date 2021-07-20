@@ -216,8 +216,8 @@ class Decoder(nn.Module):
 		ys = torch.tile(self.initial_context, (N, 1, 1))
 
 		output_lengths = torch.ones(N, device=device, dtype=int) * self.hparams.max_decoder_steps
-		outputs = torch.zeros(N, self.hparams.max_decoder_steps, self.hparams.n_mel_channels).to(device)
-		context = torch.zeros(N, self.hparams.max_decoder_steps, 64).to(device)
+		outputs = torch.zeros(N, self.hparams.max_decoder_steps, self.hparams.n_mel_channels, device=device, dtype=ys.dtype)
+		context = torch.zeros(N, self.hparams.max_decoder_steps, 64, device=device, dtype=ys.dtype)
 		for i in range(self.hparams.max_decoder_steps):
 			ys = self.prenet(ys)
 
@@ -239,7 +239,7 @@ class Decoder(nn.Module):
 				for idx in stop_indices[:, 0]:
 					if output_lengths[idx] == self.hparams.max_decoder_steps:
 						output_lengths[idx] = i + 1
-		
+						
 
 			ys = self.fc_out(output)
 
@@ -249,7 +249,7 @@ class Decoder(nn.Module):
 		outputs = self.postnet(outputs) + outputs
 
 		if return_attention_map:
-			return outputs, output_lengths, a.T
+			return outputs, output_lengths, a
 
 		return outputs, output_lengths
 
