@@ -71,10 +71,17 @@ class VideoExtractor(nn.Module):
 					frontend_relu,
 					nn.MaxPool3d( kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)))
 
-		self.layer_norm = nn.LayerNorm(self.backend_out)		
-
-
 		self._initialize_weights_randomly()
+
+		state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
+		state_dict.pop('trunk.1.0.weight')
+		state_dict.pop('trunk.1.1.weight')
+		state_dict.pop('trunk.1.1.bias')
+		state_dict.pop('trunk.1.1.running_mean')
+		state_dict.pop('trunk.1.1.running_var')
+		state_dict.pop('frontend3D.0.weight')
+
+		self.load_state_dict(state_dict, strict=False)
 
 	def forward(self, x):
 		B, C, T, H, W = x.size()
@@ -85,7 +92,7 @@ class VideoExtractor(nn.Module):
 		x = x.view(-1, self.backend_out)
 		x = x.view(B, Tnew, x.size(1))
 		
-		x = self.layer_norm(x)
+		x = F.normalize(x, p=2, dim=2)
 		
 		return x
 
