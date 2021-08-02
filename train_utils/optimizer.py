@@ -5,7 +5,6 @@ import torch.optim as optim
 class Optimzer:
     def __init__(self, model, start_iter, max_iter, lr=0.01, momentum=0.9, weight_decay=0.0005, patience=2, power=0.9):
         self.net = model
-        # self.optim: optim.Optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
         self.optim: optim.Optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
         self.lr = lr

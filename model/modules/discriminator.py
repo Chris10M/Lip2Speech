@@ -88,7 +88,6 @@ class Discriminator(nn.Module):
 			),
 		])   
 
-		# self.rnn = nn.GRU(1024, 1024, batch_first=True, bidirectional=True)
 		self.fc = nn.Linear(1024, 1)
 
 		self.rand_patch = None
@@ -108,9 +107,7 @@ class Discriminator(nn.Module):
 		
 		start_idx, end_idx = self.rand_patch
 		x = x[:, :, start_idx: end_idx].permute(0, 2, 1)
-		
-		# x = x.permute(0, 2, 1)
-		
+				
 
 		speaker_embeddding = speaker_embeddding.unsqueeze(1).repeat(1, x.shape[1], 1)
 		
@@ -124,9 +121,6 @@ class Discriminator(nn.Module):
 			x = layer(x)
 			features.append(x)
 		
-		# _, hidden = self.rnn(x.permute(0, 2, 1))
-		# hidden = torch.cat([h for h in hidden], dim=-1)
-		# x = torch.tanh(hidden)
 		x = F.adaptive_avg_pool1d(x, 1)
 
 		output = self.fc(x.view(N, -1)).view(N)
@@ -142,7 +136,6 @@ def main():
 
 	model = Discriminator()
 	model.eval()
-	# model.load_state_dict(torch.load('/media/ssd/christen-rnd/Experiments/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar')['model_state_dict'])
 	
 	inp = torch.rand(5, 80 + 256, 77)
 

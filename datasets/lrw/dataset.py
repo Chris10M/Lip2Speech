@@ -141,7 +141,7 @@ class LRW(Dataset):
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
 
         if self.demo:
-            return mouth, speech, melspec, face_crop, audio_path
+            return mouth, speech, melspec, face_crop, (face_path, audio_path)
             
         return mouth, speech, melspec, face_crop
 

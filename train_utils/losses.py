@@ -1,49 +1,16 @@
 from logging import log
 import torch
 from torch import nn
-from torch._C import dtype
+import numpy as np
 import torch.nn.functional as F
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-class Tacotron2Loss(nn.Module):
-    def __init__(self, start_iter, total_iter):
-        super(Tacotron2Loss, self).__init__()
-
-        self.total_iter = total_iter        
-        self.L1 = nn.L1Loss()
-        self.MSE = nn.MSELoss()
-        self.BCE = nn.BCEWithLogitsLoss()
-
-        self.cur_iter = start_iter
-
-    def forward(self, model_output, targets):
-        alpha = round(self.cur_iter / self.total_iter, 2) + 0.05
-        beta = 1.0 - alpha
-        self.cur_iter += 1
-
-        mel_target, gate_target = targets[0], targets[1]
-        mel_target.requires_grad = False
-        gate_target.requires_grad = False
-        gate_target = gate_target.view(-1, 1)
-
-        mel_out, mel_out_postnet, gate_out = model_output
-        gate_out = gate_out.view(-1, 1)
-        
-        mel_l1_loss = self.L1(mel_out, mel_target)
-        mel_loss = self.MSE(mel_out, mel_target) 
-        postnet_loss = self.MSE(mel_out_postnet, mel_target)
-
-        gate_loss = self.BCE(gate_out, gate_target)
-
-        return mel_loss, postnet_loss, gate_loss, mel_l1_loss     
-
-
-class TLoss(nn.Module):
+class Loss(nn.Module):
     def __init__(self):
-        super(TLoss, self).__init__()
+        super(Loss, self).__init__()
 
         self.BCE = nn.BCEWithLogitsLoss()
         self.MSE = nn.MSELoss()
@@ -65,7 +32,7 @@ class TLoss(nn.Module):
         
         # print(mel_out.shape, mel_target.shape)
 
-        losses['mel_loss'] = self.MSE(mel_out, mel_target) 
+        losses['mel_loss'] = 10 * self.MSE(mel_out, mel_target) 
         losses['postnet_mel_loss'] = self.MSE(mel_out_postnet, mel_target)
         losses['gate_loss'] = self.BCE(gate_out, gate_target)
 
@@ -73,58 +40,81 @@ class TLoss(nn.Module):
 
 
 
-class MiniBatchConstrastiveLoss(nn.Module):
-    def __init__(self, t=0.07):
-        super(MiniBatchConstrastiveLoss, self).__init__()
+class AdversarialLoss(nn.Module):
+    def __init__(self, optim_D):
+        super(AdversarialLoss, self).__init__()
         
-        self.t = torch.tensor(t).to(device)
+        self.optimizer_D = optim_D
         self.BCE = nn.BCEWithLogitsLoss()
-       
-    def forward(self, constrastive_features):
-        face_pair_1, face_pair_2, encoded_mel_gt, encoded_mel_pred = constrastive_features 
+
+    def forward(self, D, model_output, face_features, losses=None):
+        if losses is None:
+            losses = dict()
+
         
-        l1_loss = self.L1(encoded_mel_gt, face_embeddings) + self.L1(encoded_mel_pred, face_embeddings)
+        real, fake = model_output
+        face_features = face_features.detach()
+
+        real = real.detach()        
+        fake = fake
+
+        real_pred, real_pred_features = D(real, face_features, False, True) # False - generate random patch only once, and keep it accross all loss computation.
+        fake_pred, fake_pred_features = D(fake, face_features, True, True)
+
+
+        d_fm_loss = 0
+        for real_features, fake_features in zip(real_pred_features, fake_pred_features):
+            d_fm_loss += F.l1_loss(fake_features.view(-1), real_features.detach().view(-1))                                        
+
+        losses['g_loss'] = -torch.mean(fake_pred)
+        losses['g_d_fm_loss'] = 10 * d_fm_loss
+
+        return losses
+
+    def discriminator_forward(self, D, model_output, face_features, losses=None):
+        self.optimizer_D.zero_grad()
+
+        real, fake = model_output
+        face_features = face_features.detach() 
+
+        real = real.detach()
+        fake = fake.detach()
+
+        # lambda_gp = 10
+        # gradient_penalty = self.compute_gradient_penalty(D, real.data, fake.data, face_features)
+        d_loss = -torch.mean(D(real, face_features, True)) + torch.mean(D(fake, face_features, True)) #+ lambda_gp * gradient_penalty
+
+
+        losses['d_loss'] = d_loss
+
+        d_loss.backward()
+        self.optimizer_D.step()
+
+        for p in D.parameters():
+            p.data.clamp_(-0.01, 0.01)
+
+        return losses
+
+    def compute_gradient_penalty(self, D, real_samples, fake_samples, face_features):
+        """Calculates the gradient penalty loss for WGAN GP"""
+        # Random weight term for interpolation between real and fake samples
+        alpha = torch.Tensor(torch.rand(real_samples.size(0), 1, 1)).to(device)
+        # Get random interpolation between real and fake samples
+        interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
         
-        face_embeddings_norm = F.normalize(face_embeddings, dim=1)
-        l2_loss = self.MSE(F.normalize(encoded_mel_gt, dim=1), face_embeddings_norm) + self.MSE(F.normalize(encoded_mel_pred, dim=1), face_embeddings_norm)
-        
-        return l1_loss + 0.025 * l2_loss
-        
-        N, C = face_pair_1.shape
+        d_interpolates = D(interpolates, face_features, True).reshape(real_samples.size(0), 1)
+        fake = torch.autograd.Variable(torch.Tensor(real_samples.shape[0], 1).to(device).fill_(1.0), requires_grad=False)
+        # Get gradient w.r.t. interpolates
+        gradients = torch.autograd.grad(
+            outputs=d_interpolates,
+            inputs=interpolates,
+            grad_outputs=fake,
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
 
-        face_pair_1 = F.normalize(face_pair_1, dim=1) 
-        face_pair_2 = F.normalize(face_pair_2, dim=1)
-        
-        logits = torch.matmul(face_pair_1, face_pair_2.t())
-           
-        # # print(torch.cdist(face_pair_1, face_pair_2))
-        # # positive_pairs, negative_pairs = list(), list()
-        # # for i in range(N):
-        # #     for j in range(N):
-        # #         dot = torch.dot(face_pair_1[i], face_pair_2[j])
-        # #         if i == j:
-        # #             positive_pairs.append(dot)
-        # #         else:
-        # #             negative_pairs.append(dot)
-        # # positive_pairs = torch.stack(positive_pairs, dim=0)
-        # # negative_pairs = torch.stack(negative_pairs, dim=0)
-        # # print(positive_pairs, negative_pairs)
-        # # print(torch.sum(positive_pairs) - torch.sum(positive_pair))
-        # # # print(torch.sum(negative_pairs) - torch.sum(negative_pair))
+        gradients = gradients.reshape(gradients.size(0), -1)
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 
-
-        eye = torch.eye(N, dtype=torch.bool).to(device)
-
-        positive_pair = logits[torch.where(eye)]
-        negative_pair = logits[torch.where(~eye)]
-        
-
-        postive_labels = torch.ones(N).to(device)
-        negative_labels = torch.zeros(N * N - N).to(device)
-
-        loss_pos = self.BCE(positive_pair, postive_labels)
-        loss_neg = self.BCE(negative_pair, negative_labels)
-
-        loss = loss_pos + loss_neg
-
-        return loss
+        return gradient_penalty

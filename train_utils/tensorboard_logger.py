@@ -54,8 +54,8 @@ class Tacotron2Logger(SummaryWriter):
         #         torch.sigmoid(gate_outputs[idx]).data.cpu().numpy()),
         #     iteration, dataformats='HWC')
         
-        cv2.imwrite('/home/hlcv_team028/Project/Lip2Speech/mel_target.png', plot_spectrogram_to_numpy(mel_targets[idx].data.cpu().numpy()))
-        cv2.imwrite('/home/hlcv_team028/Project/Lip2Speech/mel_predicted.png', plot_spectrogram_to_numpy(mel_outputs[idx].data.cpu().numpy()))
+        cv2.imwrite('mel_target.png', plot_spectrogram_to_numpy(mel_targets[idx].data.cpu().numpy()))
+        cv2.imwrite('mel_predicted.png', plot_spectrogram_to_numpy(mel_outputs[idx].data.cpu().numpy()))
 
     def log_alignment(self, alignments, iteration):
         idx = random.randint(0, alignments.size(0) - 1)
@@ -64,7 +64,7 @@ class Tacotron2Logger(SummaryWriter):
             plot_alignment_to_numpy(alignments[idx].data.cpu().numpy().T),
             iteration, dataformats='HWC')
         
-        cv2.imwrite('/home/hlcv_team028/Project/Lip2Speech/alignment.png', plot_alignment_to_numpy(alignments[idx].data.cpu().numpy().T))
+        cv2.imwrite('alignment.png', plot_alignment_to_numpy(alignments[idx].data.cpu().numpy().T))
 
     def log_predictions(self, y_pred, y):
         mel_outputs = y_pred[0] 
@@ -72,6 +72,6 @@ class Tacotron2Logger(SummaryWriter):
 
         idx = random.randint(0, mel_outputs.size(0) - 1)
 
-        cv2.imwrite('/home/hlcv_team028/Project/Lip2Speech/mel_target.png', plot_spectrogram_to_numpy(mel_targets[idx].data.cpu().numpy()))
-        cv2.imwrite('/home/hlcv_team028/Project/Lip2Speech/mel_predicted.png', plot_spectrogram_to_numpy(mel_outputs[idx].data.cpu().numpy()))
+        cv2.imwrite('mel_target.png', plot_spectrogram_to_numpy(mel_targets[idx].data.cpu().numpy()))
+        cv2.imwrite('mel_predicted.png', plot_spectrogram_to_numpy(mel_outputs[idx].data.cpu().numpy()))
 

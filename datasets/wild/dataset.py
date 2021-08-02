@@ -2,18 +2,14 @@ import random
 import torch
 import sys
 import torch.nn as nn 
-import torchvision
-import ffmpeg
 import torchaudio
 import bz2
 import pickle
 import torchvision.transforms as transforms
 import cv2
 import math
-import traceback
 import os
 import numpy as np
-import json
 from torch.utils.data import Dataset, DataLoader
 from logging import Logger
 
@@ -163,7 +159,10 @@ class WILD(Dataset):
             lower_faces.append(self.face_resize(lower_face).unsqueeze(0))
         lower_faces = torch.cat(lower_faces, dim=0)
 
-  
+
+        if self.demo:
+            return lower_faces, speech, melspec, face_crop, audio_path
+
         return lower_faces, speech, melspec, face_crop
 
 

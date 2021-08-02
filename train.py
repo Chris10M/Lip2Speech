@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
 import torch
-# from apex import amp
+from apex import amp
 from torch import optim as Optimizer
 import numpy as np
-from torch.nn import parameter
 torch.manual_seed(1)
 from logger import setup_logger
 import os
@@ -23,11 +22,10 @@ from datasets import train_collate_fn_pad, FaceAugmentation
 from datasets.grid import GRID
 from datasets.wild import WILD
 from datasets.lrw import LRW
-from datasets.avspeech.dataset import AVSpeech
+from datasets.avspeech import AVSpeech
 from train_utils.losses import *
 from model import model
 from hparams import create_hparams
-# from evaluate import evaluate_net
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -35,12 +33,12 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class Logger:
 	logger = None
-	ModelSavePath = '/home/hlcv_team028/Project/Lip2Speech/savedmodels'
+	ModelSavePath = 'savedmodels'
 	tensor_board = None
 
 
 def set_model_logger(net):
-	model_info = str(net)#!/usr/bin/env python3
+	model_info = str(net)
 
 
 	respth = f'{Logger.ModelSavePath}/{hashlib.md5(model_info.encode()).hexdigest()}'
@@ -65,18 +63,18 @@ def main():
 	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
 	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', 
 	# 		  mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
-	ds = LRW('/home/hlcv_team028/Project/Datasets/LRW', face_augmentation=FaceAugmentation())
+	ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = '/home/hlcv_team028/Project/Lip2Speech/savedmodels/d915e48826cab344bc1535e895d5959e/242000_1626113062.pth'
+	saved_path = ''
 	
 	tf_ratio = 0.95
 	max_iter = 6400000
 	save_iter = 2000
-	n_img_per_gpu = 72
-	n_workers = 6
+	n_img_per_gpu = 16
+	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
 					batch_size=n_img_per_gpu,
@@ -87,7 +85,7 @@ def main():
 					collate_fn=train_collate_fn_pad)
 
 	optim = Optimizer.AdamW([{'params': net.decoder.parameters()},
-							 {'params': net.v_encoder.parameters()},
+							 {'params': net.encoder.parameters()},
 							], lr=hparams.learning_rate, weight_decay=hparams.weight_decay, amsgrad=True)
 
 	if hparams.fp16_run:
@@ -124,9 +122,7 @@ def main():
 		print(f'Model Loaded: {saved_path} @ start_it: {start_it}')
 
 
-	# reconstruction_criterion = Tacotron2Loss(start_it, max_iter)
-	reconstruction_criterion = TLoss()
-	# contrastive_criterion = MiniBatchConstrastiveLoss()
+	reconstruction_criterion = Loss()
 	
 	## train loop
 	msg_iter = 50
@@ -157,15 +153,6 @@ def main():
 		outputs = net(videos, face_crops, audios, melspecs, video_lengths, audio_lengths, melspec_lengths, tf_ratio)
 		
 		
-
-		# mel_outputs, mel_outputs_postnet, gate_outputs, alignments = outputs
-		# mel_loss, postnet_loss, gate_loss, mel_l1_loss = reconstruction_criterion((mel_outputs, mel_outputs_postnet, gate_outputs), (melspecs, mel_gates))
-		# loss_log['mel_loss'] += mel_loss.item()
-		# loss_log['postnet_loss'] += postnet_loss.item()
-		# loss_log['gate_loss'] += gate_loss.item()
-		# loss_log['mel_l1_loss'] += mel_l1_loss.item()
-		# r_loss = mel_loss + postnet_loss + gate_loss + mel_l1_loss
-		# loss_log['r_loss'] += r_loss.item()
 		losses = dict()
 
 		losses = reconstruction_criterion(outputs, (melspecs, mel_gates), losses)
@@ -240,7 +227,6 @@ def main():
 			Logger.tensor_board.log_training(loss_log['loss'], grad_norm, hparams.learning_rate, t_intv, it + 1)
 			Logger.logger.info(msg)
 
-			# Logger.tensor_board.log_alignment(alignments, it + 1)
 			Logger.tensor_board.log_predictions(outputs, (melspecs, mel_gates))
 
 			loss_log = collections.defaultdict(float)
