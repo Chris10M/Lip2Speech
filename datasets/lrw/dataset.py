@@ -70,7 +70,7 @@ def train_collate_fn_pad(batch):
 class LRW(Dataset):
     def __init__(self, rootpth, face_size=(96, 96), mode='train', demo=False, duration=1, face_augmentation=None, *args, **kwargs):
         super(LRW, self).__init__(*args, **kwargs)
-        assert mode in ('train', 'test')
+        assert mode in ('train', 'test', 'val')
 
         self.rootpth = rootpth
         

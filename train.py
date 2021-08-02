@@ -23,6 +23,7 @@ from datasets.grid import GRID
 from datasets.wild import WILD
 from datasets.lrw import LRW
 from datasets.avspeech import AVSpeech
+from evaluate import evaluate_net
 from train_utils.losses import *
 from model import model
 from hparams import create_hparams
@@ -59,11 +60,14 @@ def set_model_logger(net):
 def main():
 	hparams = create_hparams()
 	
+	ROOT_PATH = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets'
+
 	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test', face_augmentation=FaceAugmentation())
 	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
-	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', 
-	# 		  mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
-	ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', face_augmentation=FaceAugmentation())
+	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
+	
+	ds = LRW('{ROOT_PATH}/LRW', face_augmentation=FaceAugmentation())
+	val_ds = LRW('{ROOT_PATH}/LRW', mode='val', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
@@ -89,10 +93,9 @@ def main():
 							], lr=hparams.learning_rate, weight_decay=hparams.weight_decay, amsgrad=True)
 
 	if hparams.fp16_run:
-		net.decoder.decoder.attention_layer.score_mask_value = np.finfo('float16').min
 		net, optim = amp.initialize(net, optim, opt_level='O2')
 
-	min_eval_loss = 1e5
+	max_eval_score = 0
 	start_it = 0
 	if os.path.isfile(saved_path):
 		loaded_model = torch.load(saved_path, map_location=device)
@@ -110,7 +113,7 @@ def main():
 			start_it = 0
 
 		try:
-			min_eval_loss = loaded_model['min_eval_loss']
+			max_eval_score = loaded_model['max_eval_score']
 		except KeyError: ...
 
 		try:
@@ -183,25 +186,24 @@ def main():
 
 		for k, v in losses.items(): loss_log[k] += v.item()
 		if (it + 1) % save_iter == 0:
-				save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
+			save_pth = osp.join(Logger.ModelSavePath, f'{it + 1}_{int(time.time())}.pth')
 
-			# evaluation = evaluate_net(args, net)
-			# Logger.logger.info(f"Model@{it + 1}\n{evaluation}"
-			# optim.reduce_lr_on_plateau(eval_loss)
-				eval_loss = loss
-				Logger.tensor_board.log_validation(eval_loss, net, (melspecs, mel_gates), outputs, it + 1)
+			eval_score = evaluate_net(net, val_ds)
+			
+			Logger.logger.info(f"Model@{it + 1}\n Evaluation score: {eval_score}")
+			Logger.tensor_board.log_validation(eval_score, net, (melspecs, mel_gates), outputs, it + 1)
 
-			# if eval_loss < min_eval_loss:  
+			if eval_score < max_eval_score:  
 				print(f'Saving model at: {(it + 1)}, save_pth: {save_pth}')
 				torch.save({
 					'start_it': it,
 					'state_dict': net.state_dict(),
 					'optimize_state': optim.state_dict(),
-					'min_eval_loss': min_eval_loss,
+					'max_eval_score': max_eval_score,
 				}, save_pth)
 				print(f'model at: {(it + 1)} Saved')
 
-				# min_eval_loss = eval_loss
+				max_eval_score = eval_score
 
 		#   print training log message
 		if (it+1) % msg_iter == 0:
