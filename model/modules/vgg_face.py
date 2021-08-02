@@ -25,9 +25,6 @@ class FaceRecognizer(nn.Module):
             nn.Linear(512, 256),
         )
 
-        m = torch.load('/home/hlcv_team028/Project/Lip2Speech/437000_1625368231.pth', map_location=device)
-        self.load_state_dict(m['state_dict'])
-
     def forward(self, x):
         x = self.resnet.conv2d_1a(x)
         x = self.resnet.conv2d_2a(x)

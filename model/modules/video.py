@@ -73,16 +73,6 @@ class VideoExtractor(nn.Module):
 
 		self._initialize_weights_randomly()
 
-		state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/lrw_snv1x_dsmstcn3x.pth.tar', map_location=device)['model_state_dict']
-		state_dict.pop('trunk.1.0.weight')
-		state_dict.pop('trunk.1.1.weight')
-		state_dict.pop('trunk.1.1.bias')
-		state_dict.pop('trunk.1.1.running_mean')
-		state_dict.pop('trunk.1.1.running_var')
-		state_dict.pop('frontend3D.0.weight')
-
-		self.load_state_dict(state_dict, strict=False)
-
 	def forward(self, x):
 		B, C, T, H, W = x.size()
 		x = self.frontend3D(x)

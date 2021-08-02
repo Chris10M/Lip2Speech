@@ -1,30 +1,21 @@
-import random
 import torch
 import sys
 import torch.nn as nn 
-import torchvision
 import bz2
 import pickle
-import torchaudio
 import torchvision.transforms as transforms
 import cv2
-import math
-import traceback
 import os
 import numpy as np
-import json
 from torch.utils.data import Dataset, DataLoader
-from logging import Logger
 
-from torchvision.transforms.transforms import Lambda
 
 try: 
-    from datasets import MelSpectrogram, align_and_crop_face
+    from datasets import MelSpectrogram
 except: 
     sys.path.extend(['..'])
     from spectograms import MelSpectrogram
-    from face_utils import align_and_crop_face 
-
+    
 
 def loadframes(filename):
     with bz2.BZ2File(filename, 'r') as f:
@@ -118,14 +109,10 @@ class LRW(Dataset):
             self.items[index] = [face_path, mouth_path, audio_path]            
             index += 1
 
-            if index > 100000: break
-
         self.len = len(self.items)
         self.duration = duration
 
         print(f'Size of {type(self).__name__}: {self.len}')
-
-        # random.shuffle(self.items) 
          
     def __len__(self):
         return self.len
@@ -146,27 +133,20 @@ class LRW(Dataset):
         speech = torch.from_numpy(audio)
 
     
-        # speech = torch.cat([speech, torch.zeros(1, 1280)], dim=1) # silence, 5x hop_size
-
         melspec = self.melspec_g(speech).squeeze(0)
-
-        # print('speech.shape ', speech.shape, 'melspec.shape', melspec.shape)
         
         mouth = self.face_resize(mouth)
 
         face_indices = (torch.rand(2) * len(faces)).int()
         face_crop = torch.cat([self.face_recog_resize(faces[f_id]).unsqueeze(0) for f_id in face_indices], dim=0)
 
-        # print(face_crop.shape)
-        # print(mouth)
-        # print(mouth.shape)
-        
+        if self.demo:
+            return mouth, speech, melspec, face_crop, audio_path
+            
         return mouth, speech, melspec, face_crop
 
 
 def main(): 
-    # import sys; sys.path.append('../..')
-    # from datasets import train_collate_fn_pad    
     ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', mode='test')
 
     dl = DataLoader(ds,
