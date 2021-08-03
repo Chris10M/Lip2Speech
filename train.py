@@ -66,8 +66,8 @@ def main():
 	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
 	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
 	
-	ds = LRW('{ROOT_PATH}/LRW', face_augmentation=FaceAugmentation())
-	val_ds = LRW('{ROOT_PATH}/LRW', mode='val', face_augmentation=FaceAugmentation())
+	ds = LRW(f'{ROOT_PATH}/LRW', face_augmentation=FaceAugmentation())
+	val_ds = LRW(f'{ROOT_PATH}/LRW', mode='val', face_augmentation=FaceAugmentation())
 
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
