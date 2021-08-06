@@ -230,7 +230,8 @@ def main():
 			Logger.logger.info(msg)
 
 			Logger.tensor_board.log_predictions(outputs, (melspecs, mel_gates))
-
+			Logger.tensor_board.log_alignment(F.softmax(outputs[4], dim=-1), it + 1)
+			
 			loss_log = collections.defaultdict(float)
 			st = ed
 

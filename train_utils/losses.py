@@ -1,7 +1,9 @@
 from logging import log
+import model
 import torch
 from torch import nn
 import numpy as np
+from torch._C import dtype
 import torch.nn.functional as F
 
 
@@ -15,6 +17,21 @@ class Loss(nn.Module):
         self.BCE = nn.BCEWithLogitsLoss()
         self.MSE = nn.MSELoss()
 
+        self.attention_mask = self.LRW_attention_mask()
+
+    def LRW_attention_mask(self):
+        attention_gt = torch.ones(1, 77, dtype=torch.long, device=device) * - 1
+        
+        seq_len = 77
+        inp_len = 29
+            
+        for i in range(seq_len):
+            attention_gt[:, i] = 0
+            adx = int((i / seq_len) * inp_len) # attention_matrix.shape[2] SHOULD Give the encoder lengths
+            attention_gt[:, i] = adx       
+
+        return attention_gt
+
     def forward(self, model_output, targets, losses=None):
         if losses is None:
             losses = dict()
@@ -22,6 +39,7 @@ class Loss(nn.Module):
         mel_target, gate_target = targets[0], targets[1]
         mel_target.requires_grad = False
         gate_target.requires_grad = False
+        stop_tokens = gate_target
         gate_target = gate_target.view(-1, 1)
 
         mel_out = model_output[0]
@@ -29,8 +47,25 @@ class Loss(nn.Module):
         gate_out = model_output[2]
 
         gate_out = gate_out.view(-1, 1)
+
+        attention_matrix = model_output[4]
+        encoder_lengths = model_output[5]
         
-        # print(mel_out.shape, mel_target.shape)
+
+        # attention_gt = torch.ones(attention_matrix.shape[0], attention_matrix.shape[1], dtype=torch.long, device=device) * - 1
+        # for bdx in range(0, stop_tokens.shape[0]):
+        #     seq_len = (stop_tokens[bdx] == 1).nonzero(as_tuple=True)[0] + 1
+        #     inp_len = encoder_lengths[bdx]
+            
+        #     for i in range(seq_len):
+        #         attention_gt[bdx, i] = 0
+        #         adx = int((i / seq_len) * inp_len) # attention_matrix.shape[2] SHOULD Give the encoder lengths
+        #         attention_gt[bdx, i] = adx       
+
+        attention_gt = self.attention_mask.repeat(attention_matrix.shape[0], 1)
+
+        losses['att_loss'] = F.cross_entropy(attention_matrix.permute(0, 2, 1), attention_gt, ignore_index=-1)
+
 
         losses['mel_loss'] = 10 * self.MSE(mel_out, mel_target) 
         losses['postnet_mel_loss'] = self.MSE(mel_out_postnet, mel_target)

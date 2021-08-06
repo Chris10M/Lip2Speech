@@ -37,7 +37,7 @@ class Lip2Speech(nn.Module):
 	
 		outputs = self.decoder(visual_features, face_features, melspecs, encoder_lengths, melspec_lengths, tf_ratio)
 
-		return outputs
+		return outputs + [encoder_lengths]
 				
 
 	def inference(self, video_frames, face_frames, speaker_embedding=None, **kwargs):

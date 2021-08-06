@@ -63,28 +63,25 @@ class Discriminator(nn.Module):
 
 			nn.Linear(384, 256),
 			nn.LeakyReLU(0.2, inplace=True),
+			
+			nn.Dropout(0.1),
 		)
 
 		self.decoder = nn.ModuleList([
 			nn.Sequential(
 				ResidualBlock(256, 256),
-				nn.Dropout(0.2),
 			),
 			nn.Sequential(
 				ResidualBlock(256, 384),
-				nn.Dropout(0.2),
 			),
 			nn.Sequential(
 				ResidualBlock(384, 512),
-				nn.Dropout(0.2),
 			),
 			nn.Sequential(
 				ResidualBlock(512, 768),
-				nn.Dropout(0.2),
 			),
 			nn.Sequential(
 				ResidualBlock(768, 1024, down_sample=False),	
-				nn.Dropout(0.2),
 			),
 		])   
 
@@ -121,9 +118,9 @@ class Discriminator(nn.Module):
 			x = layer(x)
 			features.append(x)
 		
-		x = F.adaptive_avg_pool1d(x, 1)
-
-		output = self.fc(x.view(N, -1)).view(N)
+		x = F.adaptive_avg_pool1d(x, 1).view(N, -1)
+		
+		output = self.fc(F.dropout(x, 0.2, self.training)).view(N)
 
 		if return_features:
 			return output, features

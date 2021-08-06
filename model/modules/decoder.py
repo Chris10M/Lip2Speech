@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.modules.linear import Linear
+
 
 try:
 	from hparams import create_hparams
@@ -140,17 +140,37 @@ class MultiHopConv(nn.Module):
 		super().__init__()
 
 		self.conv = nn.ModuleList([
-			nn.Conv1d(in_chns, in_chns, 1),
-			nn.Conv1d(in_chns, in_chns, 3, padding=3//2),
-			nn.Conv1d(in_chns, in_chns, 7, padding=7//2),
-			nn.Conv1d(in_chns, in_chns, 11, padding=11//2),
-			nn.Conv1d(in_chns, in_chns, 15, padding=15//2),
+			nn.Sequential(
+				nn.Conv1d(in_chns, in_chns, 1),
+				nn.BatchNorm1d(in_chns),
+				nn.Softsign(),
+			),
+			nn.Sequential(
+				nn.Conv1d(in_chns, in_chns, 3, padding=3//2),
+				nn.BatchNorm1d(in_chns),
+				nn.Softsign(),
+			),
+			nn.Sequential(
+				nn.Conv1d(in_chns, in_chns, 7, padding=7//2),
+				nn.BatchNorm1d(in_chns),
+				nn.Softsign(),
+			),
+			nn.Sequential(
+				nn.Conv1d(in_chns, in_chns, 11, padding=11//2),
+				nn.BatchNorm1d(in_chns),
+				nn.Softsign(),
+			),
+			nn.Sequential(
+				nn.Conv1d(in_chns, in_chns, 15, padding=15//2),
+				nn.BatchNorm1d(in_chns),
+				nn.Softsign(),
+			),
 		])
 
-		self.bottleneck = nn.Conv1d(512 * len(self.conv), out_chns, 1)
+		self.bottleneck = nn.Conv1d(512 * (len(self.conv) + 1), out_chns, 1)
 
 	def forward(self, x):
-		features = list()
+		features = [x]
 		for layer in self.conv:
 			features.append(layer(x))
 		
@@ -233,6 +253,7 @@ class Decoder(nn.Module):
 		outputs = torch.zeros(N, cur_max_step, C).to(device)
 		stop_tokens = torch.zeros(N, cur_max_step, 1).to(device)
 		positional_encodings = self.positional_encodings(outputs)
+		attention_matrix = list()
 		for i in range(cur_max_step):
 			
 			if torch.rand(1) > tf_ratio and teacher_consumed < int(tf_ratio * cur_max_step):
@@ -243,8 +264,11 @@ class Decoder(nn.Module):
 			
 			q = self.Q(F.softsign(ys)) + self.H_Q(F.softsign(torch.cat([h for h in hidden], dim=1))).unsqueeze(1) + positional_encodings[:, i, :512] 
 			
-			a = torch.softmax(torch.bmm(q * self.temperature, k), dim=-1)
+			a = torch.bmm(q * self.temperature, k)
 			a = F.dropout(a, 0.1, self.training)
+			attention_matrix.append(a)
+
+			a = torch.softmax(a, dim=-1)
 			o = self.attention_proj(torch.bmm(a, v))
 					
 			ys = self.layer_norm(ys + o)
@@ -260,8 +284,8 @@ class Decoder(nn.Module):
 		outputs = outputs.permute(0, 2, 1)    
 
 		post_preds = self.postnet(outputs) + outputs
-
-		return (outputs, post_preds, stop_tokens, face_features)
+		
+		return [outputs, post_preds, stop_tokens, face_features, torch.cat(attention_matrix, dim=1)]
 		
 	
 	def inference(self, encoder_outputs, face_features, return_attention_map=False):
