@@ -49,7 +49,7 @@ class Loss(nn.Module):
         gate_out = gate_out.view(-1, 1)
 
         attention_matrix = model_output[4]
-        encoder_lengths = model_output[5]
+        encoder_lengths = model_output[-1]
         
 
         # attention_gt = torch.ones(attention_matrix.shape[0], attention_matrix.shape[1], dtype=torch.long, device=device) * - 1
@@ -62,13 +62,18 @@ class Loss(nn.Module):
         #         adx = int((i / seq_len) * inp_len) # attention_matrix.shape[2] SHOULD Give the encoder lengths
         #         attention_gt[bdx, i] = adx       
 
-        attention_gt = self.attention_mask.repeat(attention_matrix.shape[0], 1)
+        # attention_gt = self.attention_mask.repeat(attention_matrix.shape[0], 1)
+        # print(F.cross_entropy(attention_matrix.permute(0, 2, 1), attention_gt, ignore_index=-1))
+        # losses['att_loss'] = F.cross_entropy(attention_matrix.permute(0, 2, 1), attention_gt, ignore_index=-1)
 
-        losses['att_loss'] = F.cross_entropy(attention_matrix.permute(0, 2, 1), attention_gt, ignore_index=-1)
+        qy = model_output[5]
+        categorical_dim = qy.shape[-1]
+        log_ratio = torch.log(qy * categorical_dim + 1e-20)
+        KLD = torch.sum(qy * log_ratio, dim=-1).mean()
+        losses['KLD'] = KLD
 
-
-        losses['mel_loss'] = 10 * self.MSE(mel_out, mel_target) 
-        losses['postnet_mel_loss'] = self.MSE(mel_out_postnet, mel_target)
+        losses['mel_loss'] = self.MSE(mel_out, mel_target) 
+        losses['postnet_mel_loss'] = 10 * self.MSE(mel_out_postnet, mel_target)
         losses['gate_loss'] = self.BCE(gate_out, gate_target)
 
         return losses     
