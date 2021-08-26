@@ -27,6 +27,7 @@ from evaluate import evaluate_net
 from train_utils.losses import *
 from model import model
 from hparams import create_hparams
+import arg_parser
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -57,32 +58,42 @@ def set_model_logger(net):
 	Logger.tensor_board = Tacotron2Logger(tf_logs)
 
 
-def main():
+def train(args):
+	dataset_name = args.dataset
+	dataset_path = args.dataset_path
+	
+	if dataset_name == 'LRW':
+		ds = LRW(dataset_path, face_augmentation=FaceAugmentation())
+		val_ds = LRW(dataset_path, mode='test', face_augmentation=FaceAugmentation())
+	elif dataset_name == 'GRID':
+		ds = GRID(dataset_path, face_augmentation=FaceAugmentation())
+		val_ds = LRW(dataset_path, mode='test', face_augmentation=FaceAugmentation())
+	elif dataset_name == 'AVSpeech':
+		ds = AVSpeech(dataset_path, face_augmentation=FaceAugmentation())
+		val_ds = LRW(dataset_path, mode='test', face_augmentation=FaceAugmentation())
+	elif dataset_name == 'WILD':
+		ds = WILD(dataset_path, face_augmentation=FaceAugmentation())
+		val_ds = LRW(dataset_path, mode='test', face_augmentation=FaceAugmentation())
+	else:
+		assert "Dataset Not Present"
+	
+	saved_path = args.finetune_model
+
+	
 	hparams = create_hparams()
 	
-	ROOT_PATH = '/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets'
-
-	# ds = AVSpeech('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/AVSpeech', mode='test', face_augmentation=FaceAugmentation())
-	# ds = GRID('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/GRID', mode='test', face_augmentation=FaceAugmentation())
-	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/DL/Deep_Learning(CS7015)___Lec_3_2_A_typical_Supervised_Machine_Learning_Setup_uDcU3ZzH7hs_mp4', mode='test', face_augmentation=FaceAugmentation(), duration=1.5)
-	
-	ds = LRW(f'{ROOT_PATH}/LRW', face_augmentation=FaceAugmentation())
-	val_ds = LRW(f'{ROOT_PATH}/LRW', mode='val', face_augmentation=FaceAugmentation())
-
 	net = model.get_network('train').to(device)
 	set_model_logger(net)
 	
-	saved_path = ''
-	
-	tf_ratio = 0.95
+	tf_ratio = 0.1
 	max_iter = 6400000
 	save_iter = 2000
-	n_img_per_gpu = 16
+	n_img_per_gpu = hparams.batch_size
 	n_workers = min(n_img_per_gpu, os.cpu_count())
 	
 	dl = DataLoader(ds,
 					batch_size=n_img_per_gpu,
-					shuffle=True,
+					shuffle=False,
 					num_workers=n_workers,
 					pin_memory=True,
 					drop_last=False, 
@@ -98,8 +109,8 @@ def main():
 	max_eval_score = 0
 	start_it = 0
 	if os.path.isfile(saved_path):
-		loaded_model = torch.load(saved_path, map_location=device)
-		state_dict = loaded_model['state_dict']
+		state_dict = torch.load(saved_path, map_location=device)
+		if 'state_dict' in state_dict: state_dict = state_dict['state_dict']
 
 		try:
 			net.load_state_dict(state_dict, strict=False)
@@ -108,16 +119,16 @@ def main():
 		
 		try:
 			start_it = 0
-			start_it = loaded_model['start_it'] + 2
+			start_it = state_dict['start_it'] + 2
 		except KeyError:
 			start_it = 0
 
 		try:
-			max_eval_score = loaded_model['max_eval_score']
+			max_eval_score = state_dict['max_eval_score']
 		except KeyError: ...
 
 		try:
-			optim.load_state_dict(loaded_model['optimize_state'])
+			optim.load_state_dict(state_dict['optimize_state'])
 			...
 		except Exception as e: print(e)
 
@@ -240,6 +251,11 @@ def main():
 	torch.save({'state_dict': net.state_dict()}, save_pth)
 
 	Logger.logger.info('training done, model saved to: {}'.format(save_pth))
+
+
+def main():
+	args = arg_parser.train()
+	train(args)
 
 
 if __name__ == "__main__":

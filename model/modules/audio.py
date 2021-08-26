@@ -108,7 +108,7 @@ class SpecEncoder(nn.Module):
 
 
 class SpeakerEncoder(nn.Module):
-    def __init__(self):
+    def __init__(self, state_dict=None):
         super().__init__()
         
         self.lstm = nn.LSTM(input_size=40,
@@ -117,14 +117,16 @@ class SpeakerEncoder(nn.Module):
                             batch_first=True)
 
         self.linear = nn.Linear(in_features=256, out_features=256)
-        
-        state_dict = torch.load('/home/hlcv_team028/Project/Lip2Speech/speaker_encoder.pt', map_location=device)['model_state']        
-        self.load_state_dict(state_dict, strict=False)
-
+                
         for name, p in self.named_parameters():
             p.requires_grad_(False)
 
         self.mel_spec = AT.MelSpectrogram(sample_rate=16000, n_fft=400, hop_length=160, n_mels=40)
+
+        if state_dict is None:
+            state_dict = torch.load('speaker_encoder.pt', map_location=device)['model_state']        
+
+        self.load_state_dict(state_dict, strict=True)
 
 
     def forward(self, utterances, hidden_init=None):

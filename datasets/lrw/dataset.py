@@ -122,11 +122,11 @@ class LRW(Dataset):
 
     def __getitem__(self, idx):
         face_path, mouth_path, audio_path = self.items[idx]
-        
+
         faces = loadframes(face_path)
         mouth = loadframes(mouth_path)
         audio = np.load(audio_path)['data'][np.newaxis]
-
+            
         faces = torch.from_numpy(faces).permute(0, 3, 1, 2)
         mouth = torch.from_numpy(mouth).permute(0, 3, 1, 2)
 

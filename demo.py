@@ -1,48 +1,65 @@
-import shutil
 import cv2
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import torch
-import os
-import speech_recognition as sr
-import imutils
-import time
-from torch._C import dtype
 from torch.utils.data import DataLoader
 from model import model
+from model.modules import SpeakerEncoder
 from datasets import MelSpec2Audio
 from hparams import create_hparams
+from datasets.grid import GRID
+from datasets.avspeech import AVSpeech
 from datasets.lrw import LRW
 from datasets.wild import WILD
 from datasets import train_collate_fn_pad, test_collate_fn_pad
 from train_utils.tensorboard_logger import plot_spectrogram_to_numpy, plot_alignment_to_numpy
 
+import arg_parser 
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-
-def demo(model_path):
+def demo(args):
 	hparams = create_hparams()
 	spec2audio = MelSpec2Audio(hparams, max_iters=256).to(device)
 
 	net = model.get_network('test')
-	net.load_state_dict(torch.load(model_path, map_location=device)['state_dict'], strict=False)
+	
+	state_dict = torch.load(args.saved_model, map_location=device)
+	if 'state_dict' in state_dict: state_dict = state_dict['state_dict']
+	
+	speaker_encoding_State_dict = dict()
+	for k in list(state_dict.keys()):
+		if k.startswith('speaker_encoder.'):
+			speaker_encoding_State_dict[k[len('speaker_encoder.'):]] = state_dict.pop(k)
+	
+	net.load_state_dict(state_dict, strict=True)
 	net.eval()
 
 	net = net.to(device)
 
-	# ds = WILD('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/WILD', mode='test', duration=1, demo=True)
-	ds = LRW('/media/ssd/christen-rnd/Experiments/Lip2Speech/Datasets/LRW', mode='test', duration=1, demo=True)
+	speaker_encoder = SpeakerEncoder(state_dict=speaker_encoding_State_dict).eval().to(device)
 
-	for batch in DataLoader(ds, batch_size=1, shuffle=True, num_workers=0, collate_fn=test_collate_fn_pad):
+	dataset_name = args.dataset
+	dataset_path = args.dataset_path
+	
+	if dataset_name == 'LRW':
+		ds = LRW(dataset_path, mode='test', duration=1, demo=True)
+	elif dataset_name == 'GRID':
+		ds = GRID(dataset_path, mode='test', duration=1, demo=True)
+	elif dataset_name == 'AVSpeech':
+		ds = AVSpeech(dataset_path, mode='test', duration=1, demo=True)
+	elif dataset_name == 'WILD':
+		ds = WILD(dataset_path, mode='test', duration=1, demo=True)
+	else:
+		raise FileNotFoundError("Dataset Not Present")
 
+
+	for bdx, batch in enumerate(DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=test_collate_fn_pad)):
 		(videos, video_lengths), (audios, audio_lengths), (melspecs, melspec_lengths, mel_gates), face_crops, file_paths = batch
-		speech = audios[:1].cpu()
-
-
+		
 		face = face_crops[0, 0, :, :, :].permute(1, 2, 0).numpy()
 		face = ((face * 128.0) + 127.5).astype(dtype=np.uint8)
 		face = face[:, :, :: -1]
@@ -60,33 +77,26 @@ def demo(model_path):
 			if ord('q') == cv2.waitKey(25):
 				exit()
 
-		# speaker_embedding  = torch.from_numpy(np.load('speaker_embedding.npy'))
-		speaker_embedding = net.vgg_face.inference(face_crops[:, 0, :, :, :])
-		
-		mel_outputs, stop_tokens, a = net.inference(videos, face_crops, speaker_embedding, return_attention_map=True)
-		# attention_matrix = a
-
-		# attention_gt = torch.ones_like(attention_matrix) * - 1
-		# for bdx in range(0, stop_tokens.shape[0]):
-		# 	seq_len = (stop_tokens[bdx] == 1).nonzero(as_tuple=True)[0] + 1
+		with torch.no_grad():
+			if args.encoding == 'face':
+				speaker_embedding = net.vgg_face.inference(face_crops[:, 0, :, :, :])
+			elif args.encoding == 'voice':
+				speaker_embedding = speaker_encoder.inference(audios.to(device))
 			
-		# 	for i in range(seq_len):
-		# 		attention_gt[bdx, i] = 0
-		# 		adx = int((i / seq_len) * attention_gt.shape[2])
-		# 		attention_gt[bdx, i, adx] = 1       
+			mel_outputs, stop_tokens, attention_matrix = net.inference(videos.to(device), face_crops.to(device), speaker_embedding.to(device), return_attention_map=True)
+			mel_outputs = mel_outputs[:1, :, :stop_tokens[0]]
+	
+		gt_speech = spec2audio(melspecs.to(device)).cpu()[0].numpy()
+		pred_speech = spec2audio(mel_outputs).cpu()[0].numpy()
 
-		# print(attention_matrix.shape)
-		mel_outputs = mel_outputs[:1, :, :stop_tokens[0]]
-		
-		melspecs = torch.trunc(melspecs)
-		print(torch.unique(melspecs))
-		# attention = a[0, :, :].numpy() * 255
-		
-		cv2.imshow('attention', plot_alignment_to_numpy(a[0, :stop_tokens[0], :].numpy().T))
+		stop_tokens = stop_tokens.cpu()
+		mel_outputs = mel_outputs.cpu()
+		attention_matrix = attention_matrix.cpu()
+
+		cv2.imshow('attention', plot_alignment_to_numpy(attention_matrix[0, :stop_tokens[0], :].T))
 		cv2.imshow('meloutput', plot_spectrogram_to_numpy(mel_outputs[0]))
 		cv2.imshow('melgt', plot_spectrogram_to_numpy(melspecs[0]))
-
-		gt_speech = spec2audio(melspecs).cpu()[0].numpy()
+		
 		sd.stop()
 		sd.play(gt_speech, hparams.sampling_rate)
 		
@@ -95,11 +105,14 @@ def demo(model_path):
 		if ord('q') == cv2.waitKey(1500):
 			exit()
 		
-		speech = spec2audio(mel_outputs).cpu()[0].numpy()
-		speech = np.pad(speech, (0, hparams.sampling_rate), mode="constant")
+		
+		speech = np.pad(pred_speech, (0, hparams.sampling_rate), mode="constant")
 		
 		sd.stop()
 		sd.play(speech, hparams.sampling_rate)
+
+		sf.write('gt.wav', gt_speech.astype(np.float32), hparams.sampling_rate)
+		sf.write('pred.wav', speech.astype(np.float32), hparams.sampling_rate)
 
 		print('Predicted Speech')
 		
@@ -108,8 +121,8 @@ def demo(model_path):
 
 
 def main():
-	model_path = 'savedmodels/48a099a8cceee04f7e2d89774904a46f/574000_1628185435.pth'
-	demo(model_path)
+	args = arg_parser.demo()
+	demo(args)
 
 
 if __name__ == '__main__':
