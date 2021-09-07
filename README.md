@@ -1,6 +1,6 @@
 # Lip2Speech [[PDF](Report.pdf)]
 
-A pipeline to lip-read a silent video and generate speech for the lip-read content.
+A pipeline for lip reading a silent speaking face in a video and generate speech for the lip-read content.
 
 <p align="center">
 <img src="images/overview.png" alt="overview" width="600"/></br>
