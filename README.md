@@ -68,3 +68,20 @@ python3 train.py --dataset LRW --root Datasets/LRW --finetune_model_path savedmo
 ## Acknowledgement
 
 [tacotron2](https://github.com/NVIDIA/tacotron2)
+
+
+## Citation
+
+If you use this software in your work, please cite it using the following metadata.
+
+
+```
+@software{Millerdurai_Lip2Speech_2021,
+author = {Millerdurai, Christen and Abdel Khaliq, Lotfy and Ulrich, Timon},
+month = {8},
+title = {{Lip2Speech}},
+url = {https://github.com/Chris10M/Lip2Speech},
+version = {1.0.0},
+year = {2021}
+}
+```
