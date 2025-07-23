@@ -71,11 +71,18 @@ python3 train.py --dataset LRW --root Datasets/LRW --finetune_model_path savedmo
 
 
 ## Citation
-
-If you use this software in your work, please cite it using the following metadata.
-
-
+If you use this research in your work, please cite it using the following metadata.
 ```
+@misc{millerdurai2022faceilltellspeak,
+      title={Show Me Your Face, And I'll Tell You How You Speak}, 
+      author={Christen Millerdurai and Lotfy Abdel Khaliq and Timon Ulrich},
+      year={2022},
+      eprint={2206.14009},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2206.14009}, 
+}
+
 @software{Millerdurai_Lip2Speech_2021,
 author = {Millerdurai, Christen and Abdel Khaliq, Lotfy and Ulrich, Timon},
 month = {8},
